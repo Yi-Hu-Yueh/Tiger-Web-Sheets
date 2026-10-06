@@ -1,0 +1,35 @@
+{
+  "id": "tiger-phase-1a-integration",
+  "name": "Tiger Web Sheets",
+  "appVersion": "1.0.0",
+  "locale": "zhTW",
+  "styles": {},
+  "sheetOrder": ["sheet-01", "sheet-02"],
+  "sheets": {
+    "sheet-01": {
+      "id": "sheet-01",
+      "name": "工作表1",
+      "rowCount": 100,
+      "columnCount": 26,
+      "freeze": {"xSplit": 1, "ySplit": 1, "startRow": 1, "startColumn": 1},
+      "mergeData": [{"startRow": 1, "endRow": 1, "startColumn": 4, "endColumn": 5}],
+      "cellData": {
+        "0": {
+          "0": {"v": 10, "s": {"bl": 1, "bg": {"rgb": "#FCE8B2"}}},
+          "1": {"v": "台中公司"},
+          "2": {"v": "00123", "t": 1},
+          "3": {"f": "=資料表!A1"}
+        },
+        "1": {"0": {"v": 20}},
+        "2": {"0": {"f": "=SUM(A1:A2)"}}
+      }
+    },
+    "sheet-02": {
+      "id": "sheet-02",
+      "name": "資料表",
+      "rowCount": 100,
+      "columnCount": 26,
+      "cellData": {"0": {"0": {"v": 100}}}
+    }
+  }
+}

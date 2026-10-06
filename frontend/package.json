@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@univerjs/core": "1.0.3",
     "@univerjs/preset-sheets-core": "1.0.3",
     "@univerjs/presets": "1.0.3",
     "react": "19.3.0",
