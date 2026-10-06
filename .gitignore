@@ -1,0 +1,7 @@
+.cache/
+.tools/
+frontend/node_modules/
+frontend/dist/
+frontend/*.local
+*.log
+
