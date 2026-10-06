@@ -30,3 +30,9 @@ def workbook_snapshot() -> dict:
 def phase1b_workbook_snapshot() -> dict:
     fixture_path = Path(__file__).parent / "fixtures" / "phase1b_workbook.json"
     return json.loads(fixture_path.read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def phase1c_formula_snapshot() -> dict:
+    fixture_path = Path(__file__).parent / "fixtures" / "phase1c_formula_cases.json"
+    return json.loads(fixture_path.read_text(encoding="utf-8"))

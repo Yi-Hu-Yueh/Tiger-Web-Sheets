@@ -1,6 +1,6 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets Phase 1B is a persistent browser spreadsheet vertical slice. It connects an editable open-source Univer workbook to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics, while using Univer's native open-source spreadsheet operations and formatting UI.
+Tiger Web Sheets Phase 1C is a persistent browser spreadsheet vertical slice. It connects an editable open-source Univer workbook to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics, while using Univer's native open-source spreadsheet operations, formatting UI, and formula engine.
 
 ## Architecture
 
@@ -87,6 +87,14 @@ Verified native operations include:
 For identifiers that must retain a leading zero, select the cells and apply the native **Text / 文字** number format before entering or pasting the values. This was verified with `00123`, `0912345678`, and `01234567`; the saved cell values remain strings after reload and backend restart.
 
 Phase 1B operations that mutate persisted workbook state change the header status to `未儲存`. A successful manual save returns it through `儲存中` to `已儲存`. Values, formulas, worksheets, dimensions, hidden state, formatting, merges, freeze state, zoom, number formats, and leading-zero text are stored inside the complete Univer snapshot.
+
+## Phase 1C formula compatibility baseline
+
+The installed Univer 1.0.3 open-source formula engine is verified for basic arithmetic, `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, relative/absolute/mixed/range references, same-sheet and cross-sheet references, native fill adjustment, direct and cross-sheet recalculation, formula error values, save/reload, and backend-restart persistence.
+
+The detailed compatibility evidence, exact observed formula strings, limitations, isolated database location, and 45-step owner test are recorded in [docs/PHASE1C_FORMULA_MATRIX.md](docs/PHASE1C_FORMULA_MATRIX.md). The reusable workbook snapshot is [backend/tests/fixtures/phase1c_formula_cases.json](backend/tests/fixtures/phase1c_formula_cases.json).
+
+Structural insert/delete reference rewriting remains a documented partial edge case, and ordinary desktop copy-reference adjustment remains an owner runtime checkpoint. These limitations do not replace the verified formula results with compatibility claims that were not observed.
 
 ## API
 

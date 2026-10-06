@@ -159,3 +159,83 @@ def test_phase1b_snapshot_properties_round_trip(
         "0912345678",
         "01234567",
     ]
+
+
+def test_phase1c_formula_snapshot_round_trip(
+    client: TestClient, phase1c_formula_snapshot: dict
+) -> None:
+    saved = client.put(
+        "/api/workbooks/default",
+        json=save_payload(phase1c_formula_snapshot),
+    )
+    assert saved.status_code == 200
+
+    loaded = client.get("/api/workbooks/default")
+    assert loaded.status_code == 200
+    snapshot = loaded.json()["snapshot"]
+    assert snapshot == phase1c_formula_snapshot
+    assert snapshot["sheetOrder"] == [
+        "formula-main",
+        "data-sheet",
+        "structural-sheet",
+    ]
+
+    main = snapshot["sheets"]["formula-main"]["cellData"]
+    arithmetic_cases = [
+        (main[str(row)]["3"]["f"], main[str(row)]["3"]["v"])
+        for row in range(10)
+    ]
+    assert arithmetic_cases == [
+        ("=1+2", 3),
+        ("=10-3", 7),
+        ("=4*5", 20),
+        ("=20/4", 5),
+        ("=2+3*4", 14),
+        ("=(2+3)*4", 20),
+        ("=A1+B1", 12),
+        ("=A1-B1", 8),
+        ("=A1*B1", 20),
+        ("=A1/B1", 5),
+    ]
+    function_cases = [
+        (main[str(row)]["4"]["f"], main[str(row)]["4"]["v"])
+        for row in range(7)
+    ]
+    assert function_cases == [
+        ("=SUM(A1:A5)", 60),
+        ("=AVERAGE(A1:A5)", 20),
+        ("=MIN(A1:A5)", 10),
+        ("=MAX(A1:A5)", 30),
+        ("=COUNT(A1:A5)", 3),
+        ('=IF(A1>=10,"PASS","FAIL")', "PASS"),
+        ('=IF(B1>=10,"PASS","FAIL")', "FAIL"),
+    ]
+    assert [main["1"][str(column)]["f"] for column in range(9, 13)] == [
+        "=A2",
+        "=$A$1",
+        "=$A2",
+        "=A$1",
+    ]
+    assert [main[str(row)]["10"]["f"] for row in range(3, 7)] == [
+        "=B1",
+        "=B$1",
+        "=$A1",
+        "=$A$1",
+    ]
+    assert (main["0"]["6"]["f"], main["0"]["6"]["v"]) == (
+        "=資料表!A1",
+        100,
+    )
+    assert (main["1"]["6"]["f"], main["1"]["6"]["v"]) == (
+        "=SUM(資料表!A1:A3)",
+        600,
+    )
+    assert (main["0"]["7"]["v"], main["1"]["7"]["v"]) == (
+        "#DIV/0!",
+        "#NAME?",
+    )
+    assert snapshot["sheets"]["structural-sheet"]["cellData"]["2"]["0"] == {
+        "f": "=SUM(A1:A2)",
+        "v": 30,
+        "t": 2,
+    }
