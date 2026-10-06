@@ -122,3 +122,40 @@ def test_sqlite_integrity_check(
     finally:
         connection.close()
     assert result == ("ok",)
+
+
+def test_phase1b_snapshot_properties_round_trip(
+    client: TestClient, phase1b_workbook_snapshot: dict
+) -> None:
+    saved = client.put(
+        "/api/workbooks/default",
+        json=save_payload(phase1b_workbook_snapshot),
+    )
+    assert saved.status_code == 200
+
+    loaded = client.get("/api/workbooks/default")
+    assert loaded.status_code == 200
+    snapshot = loaded.json()["snapshot"]
+    assert snapshot == phase1b_workbook_snapshot
+
+    sheet = snapshot["sheets"]["sheet-01"]
+    assert sheet["rowData"]["10"] == {"h": 40, "hd": 1}
+    assert sheet["columnData"]["10"] == {"w": 161, "hd": 1}
+    assert sheet["mergeData"][0] == {
+        "startRow": 4,
+        "endRow": 4,
+        "startColumn": 6,
+        "endColumn": 7,
+    }
+    assert sheet["freeze"] == {
+        "xSplit": 1,
+        "ySplit": 0,
+        "startRow": -1,
+        "startColumn": 1,
+    }
+    assert sheet["zoomRatio"] == 0.9
+    assert [sheet["cellData"]["13"][str(column)]["v"] for column in range(4, 7)] == [
+        "00123",
+        "0912345678",
+        "01234567",
+    ]

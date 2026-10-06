@@ -24,3 +24,9 @@ def client(database_path: Path):
 def workbook_snapshot() -> dict:
     fixture_path = Path(__file__).parent / "fixtures" / "phase1a_workbook.json"
     return json.loads(fixture_path.read_text(encoding="utf-8"))
+
+
+@pytest.fixture
+def phase1b_workbook_snapshot() -> dict:
+    fixture_path = Path(__file__).parent / "fixtures" / "phase1b_workbook.json"
+    return json.loads(fixture_path.read_text(encoding="utf-8"))

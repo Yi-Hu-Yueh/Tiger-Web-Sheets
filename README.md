@@ -1,6 +1,6 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets Phase 1A is a persistent browser spreadsheet vertical slice. It connects an editable open-source Univer workbook to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics.
+Tiger Web Sheets Phase 1B is a persistent browser spreadsheet vertical slice. It connects an editable open-source Univer workbook to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics, while using Univer's native open-source spreadsheet operations and formatting UI.
 
 ## Architecture
 
@@ -67,6 +67,27 @@ Dependencies are locked. To restore them:
 
 On startup, a stored workbook is authoritative. The Phase 0 sample is used only when the API explicitly returns 404. If the backend is unavailable, the app shows a backend error instead of claiming that data is saved.
 
+## Phase 1B spreadsheet operations
+
+The installed Univer 1.0.3 open-source presets provide the grid, clipboard, native undo/redo stack, row and column context menus, worksheet tabs, freeze controls, zoom, cell formatting, merge/unmerge, and number formats. Tiger Web Sheets persists their workbook snapshot state without adding parallel spreadsheet implementations.
+
+Verified native operations include:
+
+- rectangular multi-cell copy/paste, native context-menu cut/paste, and external text paste; Ctrl+C and Ctrl+V were verified, while synthetic Ctrl+X could not be exercised by the in-app browser automation
+- Delete clears cell contents while retaining cell formatting; cell editing and keyboard navigation were verified with Enter, Escape, arrow keys, Tab, and Shift+Tab
+- Undo with Ctrl+Z and Redo with the toolbar; Ctrl+Y did not redo in the tested environment, so use the toolbar Redo command
+- insert, delete, hide/unhide, and resize rows and columns
+- add, switch, rename, and delete worksheets; worksheet deletion participates in Univer's native undo/redo stack
+- freeze top row, freeze first column, and remove freeze
+- zoom in, zoom out, and reset to 100%; zoom is stored per worksheet in the workbook snapshot
+- font family, font size, bold, text color, fill, borders, horizontal/vertical alignment, and wrapping
+- merge/unmerge
+- number, percentage, date, Taiwan-dollar currency, and text formats
+
+For identifiers that must retain a leading zero, select the cells and apply the native **Text / 文字** number format before entering or pasting the values. This was verified with `00123`, `0912345678`, and `01234567`; the saved cell values remain strings after reload and backend restart.
+
+Phase 1B operations that mutate persisted workbook state change the header status to `未儲存`. A successful manual save returns it through `儲存中` to `已儲存`. Values, formulas, worksheets, dimensions, hidden state, formatting, merges, freeze state, zoom, number formats, and leading-zero text are stored inside the complete Univer snapshot.
+
 ## API
 
 - `GET /api/health`
@@ -93,13 +114,16 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 ..\.tools\node-v24.19.0-win-x64\npm.cmd run build
 ```
 
-## Phase 1A limitations
+## Phase 1B limitations
 
 - Autosave is not implemented.
 - A workbook/document manager is not implemented.
 - Save As and document rename workflows are not implemented.
+- Sort, filter, find, and replace are not implemented in this phase.
 - CSV import/export is not implemented.
 - XLSX import/export is not implemented.
 - The stored file is Univer snapshot JSON in SQLite, not an XLSX workbook.
-- Authentication, collaboration, charts, pivot tables, AI, and cloud deployment are not implemented.
+- Conditional formatting, data validation, charts, pivot tables, printing, PDF export, and version history are not implemented.
+- Authentication, collaboration, AI, and cloud deployment are not implemented.
+- Excel compatibility is not claimed beyond the behavior explicitly tested with Univer 1.0.3.
 

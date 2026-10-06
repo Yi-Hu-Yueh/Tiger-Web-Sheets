@@ -1,0 +1,64 @@
+{
+  "id": "tiger-phase-1b-regression",
+  "name": "Tiger Web Sheets Phase 1B",
+  "appVersion": "1.0.0",
+  "locale": "zhTW",
+  "styles": {
+    "heading": {
+      "ff": "Times New Roman",
+      "fs": 14,
+      "bl": 1,
+      "cl": {"rgb": "#D49D0F"},
+      "bg": {"rgb": "#414657"},
+      "ht": 2,
+      "vt": 2,
+      "tb": 3
+    },
+    "number": {"n": {"pattern": "0"}},
+    "percentage": {"n": {"pattern": "0.00%"}},
+    "date": {"n": {"pattern": "yyyy-mm-dd;@"}},
+    "currency": {"n": {"pattern": "\"NT$\"#,##0.00"}},
+    "text": {"n": {"pattern": "@"}}
+  },
+  "sheetOrder": ["sheet-01", "sheet-02"],
+  "sheets": {
+    "sheet-01": {
+      "id": "sheet-01",
+      "name": "工作表1",
+      "rowCount": 102,
+      "columnCount": 28,
+      "zoomRatio": 0.9,
+      "freeze": {"xSplit": 1, "ySplit": 0, "startRow": -1, "startColumn": 1},
+      "mergeData": [{"startRow": 4, "endRow": 4, "startColumn": 6, "endColumn": 7}],
+      "rowData": {"10": {"h": 40, "hd": 1}},
+      "columnData": {"3": {"w": 165}, "10": {"w": 161, "hd": 1}},
+      "cellData": {
+        "0": {
+          "0": {"v": 10},
+          "1": {"v": "台中公司"},
+          "2": {"v": "00123", "t": 1, "s": "text"},
+          "3": {"f": "=資料表!A1", "v": 100, "t": 2}
+        },
+        "1": {"0": {"v": 20}},
+        "2": {"0": {"f": "=SUM(A1:A2)", "v": 30, "t": 2}},
+        "4": {"0": {"v": "Name", "t": 1, "s": "heading"}},
+        "13": {
+          "0": {"v": 1234.5, "t": 2, "s": "number"},
+          "1": {"v": 0.25, "t": 2, "s": "percentage"},
+          "2": {"v": 46301, "t": 2, "s": "date"},
+          "3": {"v": 1234.5, "t": 2, "s": "currency"},
+          "4": {"v": "00123", "t": 1, "s": "text"},
+          "5": {"v": "0912345678", "t": 1, "s": "text"},
+          "6": {"v": "01234567", "t": 1, "s": "text"}
+        }
+      }
+    },
+    "sheet-02": {
+      "id": "sheet-02",
+      "name": "資料表",
+      "rowCount": 100,
+      "columnCount": 26,
+      "cellData": {"0": {"0": {"v": 100}}}
+    }
+  }
+}

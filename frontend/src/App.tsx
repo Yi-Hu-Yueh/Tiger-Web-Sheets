@@ -9,6 +9,26 @@ import '@univerjs/preset-sheets-core/lib/index.css'
 const WORKBOOK_ID = 'default'
 const NON_PERSISTENT_MUTATIONS = new Set(['doc.mutation.rich-text-editing'])
 
+function isPersistedWorkbookMutation(event: {
+  id: string
+  type: CommandType
+  params?: unknown
+}): boolean {
+  if (event.type !== CommandType.MUTATION) return false
+  if (NON_PERSISTENT_MUTATIONS.has(event.id)) return false
+  if (event.id.startsWith('formula.mutation.')) return false
+
+  if (event.id === 'sheet.mutation.set-range-values') {
+    return (
+      typeof event.params === 'object' &&
+      event.params !== null &&
+      'trigger' in event.params
+    )
+  }
+
+  return true
+}
+
 const fallbackWorkbook: IWorkbookData = {
   id: 'tiger-phase-1a-workbook',
   name: 'Tiger Web Sheets',
@@ -159,10 +179,7 @@ function App() {
 
       disposables.push(
         univerAPI.addEvent(univerAPI.Event.CommandExecuted, (event) => {
-          if (
-            event.type !== CommandType.MUTATION ||
-            NON_PERSISTENT_MUTATIONS.has(event.id)
-          ) return
+          if (!isPersistedWorkbookMutation(event)) return
           changeGenerationRef.current += 1
           setStatus('unsaved')
         }),
