@@ -218,6 +218,46 @@ button {
   flex-wrap: wrap;
 }
 
+.csv-preview-dialog {
+  width: min(760px, calc(100vw - 40px));
+}
+
+.csv-warning {
+  color: #8a4b08 !important;
+}
+
+.csv-preview-scroll {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid #d8dedb;
+  border-radius: 8px;
+}
+
+.csv-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.csv-preview-table td {
+  min-width: 110px;
+  max-width: 260px;
+  padding: 7px 9px;
+  overflow: hidden;
+  border-right: 1px solid #e3e7e5;
+  border-bottom: 1px solid #e3e7e5;
+  text-overflow: ellipsis;
+  white-space: pre-wrap;
+}
+
+.document-dialog select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #cbd4cf;
+  border-radius: 6px;
+  background: white;
+}
+
 .app-shell {
   display: flex;
   width: 100%;

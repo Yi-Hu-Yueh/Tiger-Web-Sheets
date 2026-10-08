@@ -17,7 +17,28 @@ import {
 } from '@univerjs/preset-sheets-sort'
 import { createUniver, mergeLocales } from '@univerjs/presets'
 import WorkbookHome from './WorkbookHome'
-import { DeleteDialog, NameDialog, NativeCollisionDialog, UnsavedDialog } from './WorkbookDialogs'
+import {
+  CsvImportPreviewDialog,
+  CsvWorksheetDialog,
+  DeleteDialog,
+  NameDialog,
+  NativeCollisionDialog,
+  UnsavedDialog,
+} from './WorkbookDialogs'
+import { parseCsvText, type CsvTable } from './csv/csvParser'
+import {
+  createCsvWorkbookSnapshot,
+  csvRowsForWorksheet,
+  csvNameFromFilename,
+  sanitizeCsvSheetName,
+  serializeCsv,
+} from './csv/csvSerializer'
+import {
+  chooseCsvOpenFile,
+  chooseCsvSaveFile,
+  readCsvFile,
+  writeCsvFile,
+} from './files/csvFileAccess'
 import {
   bindNativeFileHandle,
   chooseNativeOpenFile,
@@ -186,6 +207,16 @@ function App() {
   const [filterPending, setFilterPending] = useState(false)
   const [filterNotice, setFilterNotice] = useState('')
   const [filterError, setFilterError] = useState('')
+  const [csvNotice, setCsvNotice] = useState('')
+  const [csvError, setCsvError] = useState('')
+  const [csvPending, setCsvPending] = useState(false)
+  const [csvPreview, setCsvPreview] = useState<{
+    filename: string
+    workbookName: string
+    sheetName: string
+    table: CsvTable
+  } | null>(null)
+  const [csvExportSheets, setCsvExportSheets] = useState<Array<{ id: string; name: string }> | null>(null)
   const [boundFileName, setBoundFileName] = useState<string | null>(null)
   const [currentWorkbook, setCurrentWorkbook] = useState<PersistedWorkbook | null>(null)
   const [workbooks, setWorkbooks] = useState<WorkbookSummary[]>([])
@@ -202,7 +233,7 @@ function App() {
   } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<WorkbookSummary | null>(null)
   const [documentActionPending, setDocumentActionPending] = useState(false)
-  const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | 'open-local' | null>(null)
+  const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | 'open-local' | 'import-csv' | null>(null)
 
   useEffect(() => {
     currentWorkbookRef.current = currentWorkbook
@@ -453,6 +484,8 @@ function App() {
 
   const openWorkbook = useCallback(async (summary: WorkbookSummary) => {
     setHomeError('')
+    setCsvNotice('')
+    setCsvError('')
     setHomeLoading(true)
     try {
       const persisted = await loadWorkbook(summary.id)
@@ -468,6 +501,8 @@ function App() {
   const openLocalFile = useCallback(async () => {
     setHomeError('')
     setLoadMessage('')
+    setCsvNotice('')
+    setCsvError('')
     let handle: NativeFileHandle | null = null
     try {
       handle = await chooseNativeOpenFile()
@@ -499,6 +534,98 @@ function App() {
       setLoadMessage(message)
     }
   }, [rememberBoundHandle])
+
+  const importCsvFile = useCallback(async () => {
+    setCsvNotice('')
+    setCsvError('')
+    setLoadMessage('')
+    setCsvPending(true)
+    try {
+      const handle = await chooseCsvOpenFile()
+      if (!handle) return
+      const table = parseCsvText(await readCsvFile(handle))
+      const workbookName = csvNameFromFilename(handle.name)
+      setCsvPreview({
+        filename: handle.name,
+        workbookName,
+        sheetName: sanitizeCsvSheetName(workbookName),
+        table,
+      })
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'CSV 匯入失敗。'
+      if (currentWorkbookRef.current) setCsvError(message)
+      else setLoadMessage(message)
+    } finally {
+      setCsvPending(false)
+    }
+  }, [])
+
+  const confirmCsvImport = useCallback(async () => {
+    if (!csvPreview || documentActionPending) return
+    setDocumentActionPending(true)
+    setCsvError('')
+    try {
+      const snapshot = createCsvWorkbookSnapshot(
+        csvPreview.workbookName,
+        csvPreview.sheetName,
+        csvPreview.table.rows,
+      )
+      const created = await createWorkbook(csvPreview.workbookName, snapshot)
+      pendingExternalWriteRef.current = null
+      openingStatusRef.current = {
+        workbookId: created.id,
+        status: 'unsaved',
+      }
+      setCsvNotice('CSV 已以全文字模式匯入為新的 Tiger 活頁簿；請使用儲存建立 .tws.json。')
+      setCsvPreview(null)
+      setStatus('loading')
+      setCurrentWorkbook(created)
+      setReloadToken((value) => value + 1)
+    } catch (error: unknown) {
+      setCsvError(error instanceof Error ? error.message : '無法建立 CSV 匯入活頁簿。')
+    } finally {
+      setDocumentActionPending(false)
+    }
+  }, [csvPreview, documentActionPending])
+
+  const exportCsvSheet = useCallback(async (target: { id: string; name: string }) => {
+    setCsvNotice('')
+    setCsvError('')
+    setLoadMessage('')
+    setCsvPending(true)
+    try {
+      const handle = await chooseCsvSaveFile(target.name)
+      if (!handle) return
+
+      const facadeWorkbook = apiRef.current?.getActiveWorkbook()
+      const sheet = facadeWorkbook?.getSheetBySheetId(target.id)
+      const snapshot = workbookRef.current?.save()
+      const sheetSnapshot = snapshot?.sheets[target.id]
+      if (!sheet || !sheetSnapshot) throw new Error('找不到要匯出的工作表。')
+      const rows = csvRowsForWorksheet(sheet, sheetSnapshot.cellData)
+      if (!rows) throw new Error('所選工作表沒有可匯出的資料。')
+      await writeCsvFile(handle, serializeCsv(rows))
+      setCsvNotice(`已匯出 ${target.name} 為 ${handle.name}；Tiger 活頁簿儲存狀態未變更。`)
+    } catch (error: unknown) {
+      setCsvError(error instanceof Error ? error.message : 'CSV 匯出失敗。')
+    } finally {
+      setCsvPending(false)
+    }
+  }, [])
+
+  const requestCsvExport = useCallback(() => {
+    const sheets = apiRef.current?.getActiveWorkbook()?.getSheets().map((sheet) => ({
+      id: sheet.getSheetId(),
+      name: sheet.getSheetName(),
+    })) ?? []
+    if (!sheets.length) {
+      setCsvError('目前活頁簿沒有可匯出的工作表。')
+    } else if (sheets.length === 1) {
+      void exportCsvSheet(sheets[0])
+    } else {
+      setCsvExportSheets(sheets)
+    }
+  }, [exportCsvSheet])
 
   const openCollisionAsCopy = useCallback(async () => {
     if (!nativeCollision) return
@@ -596,6 +723,8 @@ function App() {
   const performNavigation = useCallback((action: 'home' | 'new', discard = false) => {
     setSafeSortSelection(null)
     setSafeSortError('')
+    setCsvNotice('')
+    setCsvError('')
     if (action === 'home') {
       setHomeLoading(true)
       setHomeError('')
@@ -620,11 +749,18 @@ function App() {
     else void openLocalFile()
   }, [isDirty, openLocalFile])
 
+  const requestCsvImport = useCallback(() => {
+    if (isDirty) setPendingNavigation('import-csv')
+    else void importCsvFile()
+  }, [importCsvFile, isDirty])
+
   const confirmName = useCallback(async (name: string) => {
     if (!nameDialog) return
     setDocumentActionPending(true)
     setHomeError('')
     setLoadMessage('')
+    setCsvNotice('')
+    setCsvError('')
     try {
       if (nameDialog.mode === 'new') {
         const snapshot = freshWorkbook(name)
@@ -679,8 +815,12 @@ function App() {
     setDocumentActionPending(false)
     if (saved) {
       setPendingNavigation(null)
-      if (action === 'open-local') {
-        setLoadMessage('目前活頁簿已儲存。請再次按「開啟本機檔案」以顯示原生選擇器。')
+      if (action === 'open-local' || action === 'import-csv') {
+        setLoadMessage(
+          action === 'open-local'
+            ? '目前活頁簿已儲存。請再次按「開啟本機檔案」以顯示原生選擇器。'
+            : '目前活頁簿已儲存。請再次按「匯入 CSV」以顯示原生選擇器。',
+        )
       } else {
         performNavigation(action)
       }
@@ -873,8 +1013,10 @@ function App() {
           loading={homeLoading}
           error={homeError}
           notice={loadMessage}
+          csvPending={csvPending}
           onNew={() => setNameDialog({ mode: 'new' })}
           onOpenLocal={() => void openLocalFile()}
+          onImportCsv={() => void importCsvFile()}
           onOpen={openWorkbook}
           onRename={(target) => setNameDialog({ mode: 'rename', target })}
           onDelete={setDeleteTarget}
@@ -904,6 +1046,14 @@ function App() {
           onCopy={openCollisionAsCopy}
           onCancel={() => setNativeCollision(null)}
         />}
+        {csvPreview && <CsvImportPreviewDialog
+          filename={csvPreview.filename}
+          table={csvPreview.table}
+          error={csvError}
+          pending={documentActionPending}
+          onConfirm={confirmCsvImport}
+          onCancel={() => setCsvPreview(null)}
+        />}
       </>
     )
   }
@@ -922,11 +1072,15 @@ function App() {
           <button type="button" className="secondary-button compact-button" onClick={() => requestNavigation('home')}>回到文件列表</button>
           <button type="button" className="secondary-button compact-button" onClick={() => requestNavigation('new')}>新增活頁簿</button>
           <button type="button" className="secondary-button compact-button" onClick={requestOpenLocal}>開啟本機檔案</button>
+          <button type="button" className="secondary-button compact-button" onClick={requestCsvImport} disabled={csvPending}>匯入 CSV</button>
+          <button type="button" className="secondary-button compact-button" onClick={requestCsvExport} disabled={csvPending || !canSave}>匯出 CSV</button>
           <button type="button" className="secondary-button compact-button" onClick={() => void saveAs()} disabled={!canSave}>另存新檔</button>
           <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'rename', target: currentWorkbook })}>重新命名</button>
           {safeSortNotice && <span className="safe-sort-notice" role="status">{safeSortNotice}</span>}
           {filterNotice && <span className="filter-notice" role="status">{filterNotice}</span>}
           {filterError && <span className="filter-error" role="alert">{filterError}</span>}
+          {csvNotice && <span className="filter-notice" role="status">{csvNotice}</span>}
+          {csvError && <span className="filter-error" role="alert">{csvError}</span>}
           {loadMessage && status !== 'load-error' && <span className="filter-error" role="alert">{loadMessage}</span>}
           <button
             type="button"
@@ -1072,6 +1226,8 @@ function App() {
         setPendingNavigation(null)
         if (action === 'open-local') {
           void openLocalFile()
+        } else if (action === 'import-csv') {
+          void importCsvFile()
         } else {
           performNavigation(action, true)
         }
@@ -1083,6 +1239,25 @@ function App() {
       pending={documentActionPending}
       onCopy={openCollisionAsCopy}
       onCancel={() => setNativeCollision(null)}
+    />}
+    {csvPreview && <CsvImportPreviewDialog
+      filename={csvPreview.filename}
+      table={csvPreview.table}
+      error={csvError}
+      pending={documentActionPending}
+      onConfirm={confirmCsvImport}
+      onCancel={() => setCsvPreview(null)}
+    />}
+    {csvExportSheets && <CsvWorksheetDialog
+      sheets={csvExportSheets}
+      pending={csvPending}
+      onConfirm={(sheetId) => {
+        const sheet = csvExportSheets.find((candidate) => candidate.id === sheetId)
+        if (!sheet) return
+        setCsvExportSheets(null)
+        void exportCsvSheet(sheet)
+      }}
+      onCancel={() => setCsvExportSheets(null)}
     />}
     </>
   )

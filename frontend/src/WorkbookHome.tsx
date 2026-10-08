@@ -4,13 +4,15 @@ function modifiedTime(value: string): string {
   return new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
-export default function WorkbookHome({ workbooks, loading, error, notice, onNew, onOpenLocal, onOpen, onRename, onDelete, onRetry }: {
+export default function WorkbookHome({ workbooks, loading, error, notice, csvPending, onNew, onOpenLocal, onImportCsv, onOpen, onRename, onDelete, onRetry }: {
   workbooks: WorkbookSummary[]
   loading: boolean
   error: string
   notice: string
+  csvPending: boolean
   onNew: () => void
   onOpenLocal: () => void
+  onImportCsv: () => void
   onOpen: (workbook: WorkbookSummary) => void
   onRename: (workbook: WorkbookSummary) => void
   onDelete: (workbook: WorkbookSummary) => void
@@ -22,6 +24,7 @@ export default function WorkbookHome({ workbooks, loading, error, notice, onNew,
         <div><h1>Tiger Web Sheets</h1><p>本機活頁簿</p></div>
         <div className="home-actions">
           <button type="button" className="secondary-button" onClick={onOpenLocal}>開啟本機檔案</button>
+          <button type="button" className="secondary-button" onClick={onImportCsv} disabled={csvPending}>匯入 CSV</button>
           <button type="button" className="primary-button" onClick={onNew}>新增活頁簿</button>
         </div>
       </header>

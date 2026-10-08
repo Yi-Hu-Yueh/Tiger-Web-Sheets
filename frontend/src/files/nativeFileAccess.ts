@@ -32,7 +32,7 @@ export type NativeFileHandle = {
   requestPermission?: (options: { mode: FilePermissionMode }) => Promise<FilePermissionState>
 }
 
-type NativePickerType = {
+export type NativePickerType = {
   description: string
   accept: Record<string, string[]>
 }
@@ -86,6 +86,44 @@ export function supportsNativeFilePickers(): boolean {
   return typeof target.showOpenFilePicker === 'function' && typeof target.showSaveFilePicker === 'function'
 }
 
+export async function chooseFileForOpen(types: NativePickerType[]): Promise<NativeFileHandle | null> {
+  const target = pickerWindow()
+  if (typeof target.showOpenFilePicker !== 'function') {
+    throw new NativeFileAccessUnsupportedError('目前瀏覽器不支援本機檔案選擇功能。請使用支援此功能的桌面 Chrome 或 Edge。')
+  }
+  try {
+    const handles = await target.showOpenFilePicker({
+      multiple: false,
+      excludeAcceptAllOption: true,
+      types,
+    })
+    return handles[0] ?? null
+  } catch (error: unknown) {
+    if (isPickerCancellation(error)) return null
+    throw pickerFailure('開啟', error)
+  }
+}
+
+export async function chooseFileForSave(
+  suggestedName: string,
+  types: NativePickerType[],
+): Promise<NativeFileHandle | null> {
+  const target = pickerWindow()
+  if (typeof target.showSaveFilePicker !== 'function') {
+    throw new NativeFileAccessUnsupportedError('目前瀏覽器不支援本機檔案選擇功能。請使用支援此功能的桌面 Chrome 或 Edge。')
+  }
+  try {
+    return await target.showSaveFilePicker({
+      suggestedName,
+      excludeAcceptAllOption: true,
+      types,
+    })
+  } catch (error: unknown) {
+    if (isPickerCancellation(error)) return null
+    throw pickerFailure('儲存', error)
+  }
+}
+
 export function suggestedNativeFilename(name: string): string {
   const trimmed = name.trim() || '未命名活頁簿'
   return trimmed.toLowerCase().endsWith(NATIVE_EXTENSION) ? trimmed : `${trimmed}${NATIVE_EXTENSION}`
@@ -113,38 +151,11 @@ function pickerFailure(operation: '開啟' | '儲存', error: unknown): NativeFi
 }
 
 export async function chooseNativeOpenFile(): Promise<NativeFileHandle | null> {
-  const target = pickerWindow()
-  if (typeof target.showOpenFilePicker !== 'function') {
-    throw new NativeFileAccessUnsupportedError('目前瀏覽器不支援本機檔案選擇功能。請使用支援此功能的桌面 Chrome 或 Edge。')
-  }
-  try {
-    const handles = await target.showOpenFilePicker({
-      multiple: false,
-      excludeAcceptAllOption: true,
-      types: PICKER_TYPES,
-    })
-    return handles[0] ?? null
-  } catch (error: unknown) {
-    if (isPickerCancellation(error)) return null
-    throw pickerFailure('開啟', error)
-  }
+  return chooseFileForOpen(PICKER_TYPES)
 }
 
 export async function chooseNativeSaveFile(name: string): Promise<NativeFileHandle | null> {
-  const target = pickerWindow()
-  if (typeof target.showSaveFilePicker !== 'function') {
-    throw new NativeFileAccessUnsupportedError('目前瀏覽器不支援本機檔案選擇功能。請使用支援此功能的桌面 Chrome 或 Edge。')
-  }
-  try {
-    return await target.showSaveFilePicker({
-      suggestedName: suggestedNativeFilename(name),
-      excludeAcceptAllOption: true,
-      types: PICKER_TYPES,
-    })
-  } catch (error: unknown) {
-    if (isPickerCancellation(error)) return null
-    throw pickerFailure('儲存', error)
-  }
+  return chooseFileForSave(suggestedNativeFilename(name), PICKER_TYPES)
 }
 
 function canonicalJson(value: unknown): string {

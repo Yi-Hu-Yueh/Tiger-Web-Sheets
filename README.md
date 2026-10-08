@@ -116,6 +116,14 @@ SQLite and `workbooks\<id>.tws.json` remain the internal transactional/recovery 
 
 Opening validates JSON, format/version, identity, revision, SHA-256, and the complete snapshot before registration. A matching internal identity opens normally. A conflicting identity is never overwritten silently; the user may cancel or explicitly open it as a new copy. Renaming changes Tiger display metadata but not the physical filename. Deleting from the Tiger document manager removes only SQLite and the managed mirror; an external user-selected file is preserved. See [docs/PHASE1E_LOCAL_FILE_WORKFLOW.md](docs/PHASE1E_LOCAL_FILE_WORKFLOW.md).
 
+## Phase 1F CSV exchange
+
+**匯入 CSV** uses the native Open picker, validates UTF-8 (with or without BOM), parses quoted RFC-style comma-separated fields, and shows a filename/size/first-eight-row preview before creating a new Tiger workbook. Every imported field is stored as text, so leading-zero identifiers and formula-like strings such as `=1+1` remain literal data. Imports are limited to 5 MiB and 250,000 rectangular cells.
+
+**匯出 CSV** writes the meaningful used rectangle of one selected worksheet through the native Save picker. It exports Univer's displayed/calculated values, quotes every field, uses CRLF records, and includes a UTF-8 BOM for Windows interoperability. CSV export never changes the Tiger workbook's save state.
+
+CSV is a single-table exchange format, not a substitute for `.tws.json`. It does not preserve multiple worksheets, formulas as formulas, formatting, merged cells, freeze state, dimensions, filters, charts, or workbook metadata. XLSX remains unsupported. See [docs/PHASE1F_CSV.md](docs/PHASE1F_CSV.md).
+
 ## Phase 1B spreadsheet operations
 
 The installed Univer 1.0.3 open-source presets provide the grid, clipboard, native undo/redo stack, row and column context menus, worksheet tabs, freeze controls, zoom, cell formatting, merge/unmerge, and number formats. Tiger Web Sheets persists their workbook snapshot state without adding parallel spreadsheet implementations.
@@ -195,6 +203,7 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 - Autosave remains intentionally unsupported; manual Save is authoritative.
 - Native Open/Save pickers require a secure-context desktop Chrome or Edge implementation of the File System Access API.
 - Browser file permissions may need to be granted again after reload or browser restart.
+- CSV import supports UTF-8 only and is limited to 5 MiB / 250,000 parsed cells.
 - Single-column sorting of a multi-column record set is unsupported; the normal-looking Univer quick-sort actions are not exposed. Use the documented **安全排序** workflow.
 - Self-row-derived formula columns must remain outside the tested sort rectangle; Univer 1.0.3 does not rewrite those moved formula references in the diagnostic included-column path.
 - Generic TSV paste can auto-convert leading-zero values before sorting; this owner-observed issue remains for a dedicated repair. The sort fixture stores phone numbers as strings and verifies that sorting itself preserves them.
