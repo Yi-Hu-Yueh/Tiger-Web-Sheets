@@ -222,8 +222,9 @@ export async function permissionState(handle: NativeFileHandle, mode: FilePermis
   return handle.queryPermission({ mode })
 }
 
-export async function ensureWritePermission(handle: NativeFileHandle): Promise<void> {
+export async function ensureWritePermission(handle: NativeFileHandle, allowPrompt = true): Promise<void> {
   if (await permissionState(handle, 'readwrite') === 'granted') return
+  if (!allowPrompt) throw new NativeFilePermissionError('本機檔案需重新授權；自動儲存已暫停。請按儲存重新授權，或使用另存新檔。')
   if (!handle.requestPermission) {
     throw new NativeFilePermissionError('無法取得本機檔案寫入權限。請使用另存新檔重新選擇檔案。')
   }
@@ -236,8 +237,8 @@ export async function readNativeWorkbook(handle: NativeFileHandle): Promise<Nati
   return parseNativeWorkbookText(await (await handle.getFile()).text())
 }
 
-export async function writeNativeWorkbook(handle: NativeFileHandle, document: NativeWorkbookDocument): Promise<void> {
-  await ensureWritePermission(handle)
+export async function writeNativeWorkbook(handle: NativeFileHandle, document: NativeWorkbookDocument, allowPrompt = true): Promise<void> {
+  await ensureWritePermission(handle, allowPrompt)
   let writable: NativeFileWritable | null = null
   try {
     writable = await handle.createWritable()
@@ -261,9 +262,10 @@ export async function commitThenWriteNativeFile<T>(
   handle: NativeFileHandle,
   commitInternal: () => Promise<T>,
   loadCommittedDocument: (committed: T) => Promise<NativeWorkbookDocument>,
+  allowPrompt = true,
 ): Promise<{ committed: T; document: NativeWorkbookDocument }> {
   try {
-    await ensureWritePermission(handle)
+    await ensureWritePermission(handle, allowPrompt)
   } catch (error: unknown) {
     throw new NativePersistenceError<T>('external', '本機檔案寫入權限不可用；內部版本尚未變更。', undefined, undefined, { cause: error })
   }
@@ -280,7 +282,7 @@ export async function commitThenWriteNativeFile<T>(
     throw new NativePersistenceError('synchronization', '已建立內部復原副本，但無法取得同步文件。', committed, undefined, { cause: error })
   }
   try {
-    await writeNativeWorkbook(handle, document)
+    await writeNativeWorkbook(handle, document, allowPrompt)
   } catch (error: unknown) {
     throw new NativePersistenceError('external', '內部復原副本已儲存，但本機檔案寫入失敗。', committed, document, { cause: error })
   }

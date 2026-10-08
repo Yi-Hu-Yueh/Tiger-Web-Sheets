@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { IRange, IWorkbookData } from '@univerjs/core'
-import { CommandType, LocaleType } from '@univerjs/core'
+import { LocaleType } from '@univerjs/core'
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core'
 import UniverPresetSheetsCoreZhTW from '@univerjs/preset-sheets-core/locales/zh-TW'
 import {
@@ -19,6 +19,10 @@ import { createUniver, mergeLocales } from '@univerjs/presets'
 import WorkbookHome from './WorkbookHome'
 import { useXlsx } from './xlsx/useXlsx'
 import { recalculateXlsx } from './xlsx/xlsxRecalculation'
+import { AutosaveCoordinator } from './persistence/autosaveCoordinator'
+import { recoveryStore, recoveryDisposition, type RecoveryCheckpoint } from './persistence/recoveryStore'
+import RecoveryDialog from './persistence/RecoveryDialog'
+import { isPersistedWorkbookMutation } from './persistence/workbookMutation'
 import {
   CsvImportPreviewDialog,
   CsvWorksheetDialog,
@@ -80,35 +84,6 @@ import '@univerjs/preset-sheets-find-replace/lib/index.css'
 // Register the native sort model/command without Univer's ambiguous quick-sort UI.
 // Tiger exposes one explicit whole-record workflow below and always sets hasTitle.
 const UniverSheetsSafeSortPreset = () => ({ plugins: [UniverSheetsSortPlugin] })
-
-const NON_PERSISTENT_MUTATIONS = new Set(['doc.mutation.rich-text-editing'])
-const PERSISTED_COMMANDS = new Set([
-  'sheet.command.replace',
-  'sheet.command.set-range-values',
-])
-
-function isPersistedWorkbookMutation(event: {
-  id: string
-  type: CommandType
-  params?: unknown
-}): boolean {
-  if (event.type === CommandType.COMMAND && PERSISTED_COMMANDS.has(event.id)) {
-    return true
-  }
-  if (event.type !== CommandType.MUTATION) return false
-  if (NON_PERSISTENT_MUTATIONS.has(event.id)) return false
-  if (event.id.startsWith('formula.mutation.')) return false
-
-  if (event.id === 'sheet.mutation.set-range-values') {
-    return (
-      typeof event.params === 'object' &&
-      event.params !== null &&
-      'trigger' in event.params
-    )
-  }
-
-  return true
-}
 
 function freshWorkbook(name: string): IWorkbookData {
   const workbookId = crypto.randomUUID()
@@ -185,6 +160,17 @@ function App() {
   const currentWorkbookRef = useRef<PersistedWorkbook | null>(null)
   const changeGenerationRef = useRef(0)
   const savingRef = useRef(false)
+  const autosaveRef = useRef<AutosaveCoordinator | null>(null)
+  const persistRef = useRef<() => Promise<{ ok: boolean; generation: number }>>(async () => ({ ok: false, generation: -1 }))
+  const checkpointRef = useRef<() => Promise<void>>(async () => {})
+  const sessionRef = useRef('')
+  const baseUpdatedAtRef = useRef('')
+  const readyRef = useRef(false)
+  const fileInteractionRef = useRef(false)
+  const manualRequestRef = useRef<Promise<boolean> | null>(null)
+  const autosaveEnabledRef = useRef(true)
+  const autosaveHoldRef = useRef(false)
+  const recoveryDecisionRef = useRef<{ workbookId: string; record: RecoveryCheckpoint | null } | null>(null)
   const boundFileHandleRef = useRef<NativeFileHandle | null>(null)
   const pendingExternalWriteRef = useRef<{
     workbookId: string
@@ -196,8 +182,10 @@ function App() {
     status: SaveStatus
     message?: string
     recalculate?: boolean
+    snapshot?: IWorkbookData
   } | null>(null)
   const [status, setStatus] = useState<SaveStatus>('loading')
+  const [saveActive, setSaveActive] = useState(false)
   const [loadMessage, setLoadMessage] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
   const [safeSortSelection, setSafeSortSelection] = useState<SafeSortSelection | null>(null)
@@ -236,6 +224,11 @@ function App() {
   } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<WorkbookSummary | null>(null)
   const [documentActionPending, setDocumentActionPending] = useState(false)
+  const [autosaveEnabled, setAutosaveEnabled] = useState(() => {
+    try { return localStorage.getItem(`tiger-autosave-${import.meta.env.VITE_TIGER_INSTANCE_NONCE || 'manual'}`) !== 'off' } catch { return true }
+  })
+  const [recoveryWarning, setRecoveryWarning] = useState('')
+  const [recoveryPrompt, setRecoveryPrompt] = useState<{ committed: PersistedWorkbook; record: RecoveryCheckpoint; conflict: boolean } | null>(null)
   const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | 'open-local' | 'import-csv' | 'import-xlsx' | null>(null)
 
   const xlsx = useXlsx({
@@ -300,10 +293,39 @@ function App() {
     revisionRef.current = 0
     changeGenerationRef.current = 0
     boundFileHandleRef.current = null
+    readyRef.current = false
+    autosaveRef.current?.dispose()
+    autosaveRef.current = null
+    setRecoveryWarning('')
     setBoundFileName(null)
 
     async function initialize() {
       if (disposed || !containerRef.current) return
+
+      let recovery: RecoveryCheckpoint | null = null
+      if (recoveryDecisionRef.current?.workbookId === openedWorkbook.id) {
+        recovery = recoveryDecisionRef.current.record
+        recoveryDecisionRef.current = null
+      } else if (!(openingStatusRef.current?.workbookId === openedWorkbook.id && openingStatusRef.current.snapshot)) {
+        try {
+          const record = await recoveryStore.read(openedWorkbook.id)
+          if (disposed) return
+          const disposition = recoveryDisposition(record, openedWorkbook)
+          if (record && disposition !== 'none') {
+            setRecoveryPrompt({ committed: openedWorkbook, record, conflict: disposition === 'conflict' })
+            return
+          }
+          if (record) await recoveryStore.acknowledge(record.workbookId, record.sessionId, record.generation)
+        } catch (error) {
+          setRecoveryWarning(error instanceof Error ? error.message : '無法讀取本機復原資料。')
+        }
+      }
+      if (disposed) return
+      const openingSnapshot = openingStatusRef.current?.workbookId === openedWorkbook.id ? openingStatusRef.current.snapshot : undefined
+      const actualSnapshot = recovery?.snapshot ?? openingSnapshot ?? snapshotToOpen
+      sessionRef.current = crypto.randomUUID()
+      const sessionId = sessionRef.current
+      baseUpdatedAtRef.current = recovery?.baseUpdatedAt ?? openedWorkbook.updated_at
 
       const { univer, univerAPI } = createUniver({
         locale: LocaleType.ZH_TW,
@@ -326,15 +348,30 @@ function App() {
       apiRef.current = univerAPI
       // Univer owns and mutates the object it receives. Keep the last committed
       // API snapshot immutable so Discard can reconstruct it exactly.
-      const workbook = univerAPI.createWorkbook(structuredClone(snapshotToOpen))
+      const workbook = univerAPI.createWorkbook(structuredClone(actualSnapshot))
       workbookRef.current = workbook
-      revisionRef.current = revisionToOpen
+      revisionRef.current = recovery?.baseRevision ?? revisionToOpen
+      if (recovery || openingSnapshot) changeGenerationRef.current = 1
+      const checkpoint = async () => {
+        if (disposed || !readyRef.current) return
+        await recoveryStore.write({ workbookId: openedWorkbook.id, baseRevision: revisionRef.current,
+          baseUpdatedAt: baseUpdatedAtRef.current, timestamp: Date.now(), sessionId,
+          generation: changeGenerationRef.current, snapshot: workbook.save() })
+      }
+      checkpointRef.current = checkpoint
+      const coordinator = new AutosaveCoordinator({
+        generation: () => changeGenerationRef.current,
+        eligible: () => readyRef.current && autosaveEnabledRef.current && !!boundFileHandleRef.current && revisionRef.current > 0 && !fileInteractionRef.current && !autosaveHoldRef.current,
+        save: () => persistRef.current(), checkpoint,
+        recoveryError: (error) => { if (!disposed) setRecoveryWarning(error instanceof Error ? error.message : '本機復原寫入失敗，請手動儲存。') },
+      })
+      autosaveRef.current = coordinator
 
       // Univer schedules initial hydration and formula commands after workbook creation.
       // Keep dirty tracking detached until those snapshot-derived mutations settle.
       await new Promise((resolve) => window.setTimeout(resolve, 500))
-      if (openingStatusRef.current?.workbookId === openedWorkbook.id && openingStatusRef.current.recalculate) {
-        await recalculateXlsx(univerAPI, snapshotToOpen, abortController.signal)
+      if (recovery || openingSnapshot || openingStatusRef.current?.workbookId === openedWorkbook.id && openingStatusRef.current.recalculate) {
+        await recalculateXlsx(univerAPI, actualSnapshot, abortController.signal)
       }
       try {
         await univerAPI.getFormula().onCalculationResultApplied(1_000)
@@ -350,6 +387,7 @@ function App() {
           if (!isPersistedWorkbookMutation(event)) return
           changeGenerationRef.current += 1
           setStatus('unsaved')
+          coordinator.mutation()
         }),
       )
 
@@ -360,6 +398,7 @@ function App() {
 
       try {
         const restoredHandle = await restoreNativeFileHandle(openedWorkbook.id)
+        if (disposed) return
         if (restoredHandle) {
           boundFileHandleRef.current = restoredHandle
           setBoundFileName(restoredHandle.name)
@@ -385,8 +424,16 @@ function App() {
           }
         }
       } catch (error: unknown) {
+        if (disposed) return
         setLoadMessage(error instanceof Error ? error.message : '無法驗證已連結的本機檔案。')
         setStatus('external-failed')
+      }
+      if (disposed) return
+      readyRef.current = true
+      if (recovery || changeGenerationRef.current > 0) {
+        setStatus(recovery && recoveryDisposition(recovery, openedWorkbook) === 'conflict' ? 'conflict' : 'unsaved')
+        coordinator.mutation()
+        if (recovery && recoveryDisposition(recovery, openedWorkbook) === 'conflict') coordinator.block()
       }
     }
 
@@ -400,74 +447,70 @@ function App() {
       disposed = true
       abortController.abort()
       disposables.forEach((disposable) => disposable.dispose())
+      readyRef.current = false
+      autosaveRef.current?.dispose()
+      autosaveRef.current = null
       workbookRef.current = null
       apiRef.current = null
       univerInstance?.dispose()
     }
   }, [currentWorkbook?.id, reloadToken])
 
-  const save = useCallback(async () => {
+  const persist = useCallback(async (): Promise<{ ok: boolean; generation: number }> => {
     const workbook = workbookRef.current
     const current = currentWorkbookRef.current
-    if (!workbook || !current || savingRef.current) return false
-    setLoadMessage('')
-
-    let handle = boundFileHandleRef.current
-    if (!handle) {
-      try {
-        handle = await chooseNativeSaveFile(current.name)
-      } catch (error: unknown) {
-        setLoadMessage(error instanceof Error ? error.message : '無法選擇本機儲存檔案。')
-        setStatus(error instanceof NativeFileAccessUnsupportedError ? 'unsupported' : 'external-failed')
-        return false
-      }
-      if (!handle) {
-        setStatus('unsaved')
-        return false
-      }
-      rememberBoundHandle(current.id, handle)
-    }
-
-    try {
-      await ensureWritePermission(handle)
-    } catch (error: unknown) {
-      setLoadMessage(error instanceof Error ? error.message : '無法取得本機檔案寫入權限。')
-      setStatus('permission-required')
-      return false
-    }
+    const handle = boundFileHandleRef.current
+    if (!workbook || !current || !handle || savingRef.current) return { ok: false, generation: -1 }
 
     savingRef.current = true
+    setSaveActive(true)
     setLoadMessage('')
     setStatus('saving')
     const generationAtSnapshot = changeGenerationRef.current
+    const sessionId = sessionRef.current
 
     try {
       const pendingExternal = pendingExternalWriteRef.current
       if (pendingExternal?.workbookId === current.id && pendingExternal.generation === generationAtSnapshot) {
-        await writeNativeWorkbook(handle, pendingExternal.document)
+        const latest = await loadNativeDocument(current.id)
+        if (!nativeDocumentsMatch(latest, pendingExternal.document)) throw new ApiError('儲存衝突：內部版本已變更，拒絕同步舊檔案。', 409)
+        await writeNativeWorkbook(handle, pendingExternal.document, false)
         pendingExternalWriteRef.current = null
-        setStatus('saved')
-        return true
+        setStatus(changeGenerationRef.current === generationAtSnapshot ? 'saved' : 'unsaved')
+        try {
+          if (changeGenerationRef.current !== generationAtSnapshot) await checkpointRef.current()
+          await recoveryStore.acknowledge(current.id, sessionId, generationAtSnapshot)
+        } catch { setRecoveryWarning('已儲存，但復原記錄清理失敗；下次開啟會比對已儲存內容。') }
+        return { ok: true, generation: generationAtSnapshot }
       }
 
-      const snapshot = workbook.save()
+      const snapshot = structuredClone(workbook.save())
       const { committed: persisted } = await commitThenWriteNativeFile(
         handle,
         () => saveWorkbook(current.id, current.name, snapshot, revisionRef.current),
         (record) => loadNativeDocument(record.id),
+        false,
       )
       revisionRef.current = persisted.revision
+      baseUpdatedAtRef.current = persisted.updated_at
+      currentWorkbookRef.current = persisted
       setCurrentWorkbook(persisted)
       pendingExternalWriteRef.current = null
       setStatus(
         changeGenerationRef.current === generationAtSnapshot ? 'saved' : 'unsaved',
       )
-      return true
+      try {
+        if (changeGenerationRef.current !== generationAtSnapshot) await checkpointRef.current()
+        await recoveryStore.acknowledge(current.id, sessionId, generationAtSnapshot)
+      } catch { setRecoveryWarning('已儲存，但復原記錄清理失敗；下次開啟會比對已儲存內容。') }
+      return { ok: true, generation: generationAtSnapshot }
     } catch (error: unknown) {
       if (error instanceof NativePersistenceError) {
         const committed = error.committed as PersistedWorkbook | undefined
         if (committed) {
           revisionRef.current = committed.revision
+          baseUpdatedAtRef.current = committed.updated_at
+          currentWorkbookRef.current = committed
           setCurrentWorkbook(committed)
         }
         if (error.stage === 'external' && error.document && committed) {
@@ -488,15 +531,55 @@ function App() {
         setLoadMessage(error.message)
       } else {
         setLoadMessage(error instanceof Error ? error.message : '本機檔案儲存失敗。')
-        setStatus(error instanceof NativeFilePermissionError ? 'permission-required' : 'external-failed')
+        setStatus(error instanceof ApiError && error.status === 409 ? 'conflict' : error instanceof NativeFilePermissionError ? 'permission-required' : 'external-failed')
       }
-      return false
+      return { ok: false, generation: generationAtSnapshot }
     } finally {
       savingRef.current = false
+      setSaveActive(false)
     }
+  }, [])
+
+  useEffect(() => { persistRef.current = persist }, [persist])
+  useEffect(() => {
+    autosaveEnabledRef.current = autosaveEnabled
+    try { localStorage.setItem(`tiger-autosave-${import.meta.env.VITE_TIGER_INSTANCE_NONCE || 'manual'}`, autosaveEnabled ? 'on' : 'off') } catch { /* Setting is still usable for this session. */ }
+    if (autosaveEnabled) autosaveRef.current?.resume()
+    else autosaveRef.current?.suspend()
+  }, [autosaveEnabled])
+  useEffect(() => {
+    autosaveHoldRef.current = !!pendingNavigation || !!nameDialog || csvPending || xlsx.busy || documentActionPending
+    if (autosaveHoldRef.current) autosaveRef.current?.suspend()
+    else autosaveRef.current?.resume()
+  }, [pendingNavigation, nameDialog, csvPending, xlsx.busy, documentActionPending])
+
+  // Pickers/reauthorization are entered only by a Save click, never by a timer.
+  const save = useCallback((): Promise<boolean> => {
+    if (manualRequestRef.current) return manualRequestRef.current
+    const current = currentWorkbookRef.current, coordinator = autosaveRef.current
+    if (!current || !coordinator || !readyRef.current) return Promise.resolve(false)
+    coordinator.suspend(); fileInteractionRef.current = true
+    manualRequestRef.current = (async () => {
+      try {
+        let handle = boundFileHandleRef.current
+        if (!handle) {
+          handle = await chooseNativeSaveFile(current.name)
+          if (!handle) return false
+          rememberBoundHandle(current.id, handle)
+        }
+        await ensureWritePermission(handle)
+        return await coordinator.flush()
+      } catch (error) {
+        setLoadMessage(error instanceof Error ? error.message : '無法取得本機儲存權限。')
+        setStatus(error instanceof NativeFileAccessUnsupportedError ? 'unsupported' : error instanceof NativeFilePermissionError ? 'permission-required' : 'external-failed')
+        coordinator.block()
+        return false
+      } finally { fileInteractionRef.current = false; manualRequestRef.current = null; coordinator.resume() }
+    })()
+    return manualRequestRef.current
   }, [rememberBoundHandle])
 
-  const isDirty = status === 'unsaved' || status === 'failed' || status === 'conflict' || status === 'external-failed' || status === 'sync-failed' || status === 'permission-required' || status === 'unsupported'
+  const isDirty = saveActive || status === 'saving' || status === 'unsaved' || status === 'failed' || status === 'conflict' || status === 'external-failed' || status === 'sync-failed' || status === 'permission-required' || status === 'unsupported'
 
   useEffect(() => {
     if (!isDirty) return
@@ -682,7 +765,9 @@ function App() {
   const saveAs = useCallback(async () => {
     const workbook = workbookRef.current
     const current = currentWorkbookRef.current
-    if (!workbook || !current || savingRef.current) return
+    if (!workbook || !current || savingRef.current || fileInteractionRef.current) return
+    fileInteractionRef.current = true
+    autosaveRef.current?.suspend()
     setLoadMessage('')
 
     let handle: NativeFileHandle | null
@@ -691,38 +776,57 @@ function App() {
     } catch (error: unknown) {
       setLoadMessage(error instanceof Error ? error.message : '無法選擇另存新檔位置。')
       if (error instanceof NativeFileAccessUnsupportedError) setStatus('unsupported')
+      fileInteractionRef.current = false
+      autosaveRef.current?.resume()
       return
     }
-    if (!handle) return
+    if (!handle) { fileInteractionRef.current = false; autosaveRef.current?.resume(); return }
 
     try {
       await ensureWritePermission(handle)
     } catch (error: unknown) {
       setLoadMessage(error instanceof Error ? error.message : '無法取得本機檔案寫入權限。')
       setStatus('permission-required')
+      fileInteractionRef.current = false
+      autosaveRef.current?.resume()
       return
     }
 
     savingRef.current = true
+    setSaveActive(true)
     setLoadMessage('')
     setStatus('saving')
+    const generationAtSnapshot = changeGenerationRef.current
+    const installCopy = async (created: PersistedWorkbook, copyStatus: SaveStatus, message?: string) => {
+      let latest: IWorkbookData | undefined
+      if (changeGenerationRef.current !== generationAtSnapshot) {
+        latest = structuredClone(workbook.save())
+        try {
+          await recoveryStore.write({ workbookId: created.id, baseRevision: created.revision, baseUpdatedAt: created.updated_at,
+            timestamp: Date.now(), sessionId: sessionRef.current, generation: changeGenerationRef.current, snapshot: latest })
+        } catch { message = `${message ?? ''} 最新編輯仍在畫面中，但本機復原寫入失敗，請立即儲存。` }
+        // Capture edits made even while the IDB checkpoint was committing.
+        latest = structuredClone(workbook.save())
+      }
+      openingStatusRef.current = { workbookId: created.id, status: latest ? 'unsaved' : copyStatus, snapshot: latest, message }
+      rememberBoundHandle(created.id, handle)
+      setCurrentWorkbook(created)
+      setReloadToken((value) => value + 1)
+    }
     try {
-      const snapshot = workbook.save()
+      const snapshot = structuredClone(workbook.save())
       const name = workbookNameFromFilename(handle.name)
       const { committed: created } = await commitThenWriteNativeFile(
         handle,
         () => createWorkbook(name, snapshot),
         (record) => loadNativeDocument(record.id),
+        false,
       )
       pendingExternalWriteRef.current = null
-      rememberBoundHandle(created.id, handle)
-      openingStatusRef.current = { workbookId: created.id, status: 'saved' }
-      setCurrentWorkbook(created)
-      setReloadToken((value) => value + 1)
+      await installCopy(created, 'saved')
     } catch (error: unknown) {
       if (error instanceof NativePersistenceError && error.committed) {
         const created = error.committed as PersistedWorkbook
-        rememberBoundHandle(created.id, handle)
         if (error.stage === 'external' && error.document) {
           pendingExternalWriteRef.current = {
             workbookId: created.id,
@@ -730,19 +834,16 @@ function App() {
             generation: 0,
           }
         }
-        openingStatusRef.current = {
-          workbookId: created.id,
-          status: error.stage === 'external' ? 'external-failed' : 'sync-failed',
-          message: error.message,
-        }
-        setCurrentWorkbook(created)
-        setReloadToken((value) => value + 1)
+        await installCopy(created, error.stage === 'external' ? 'external-failed' : 'sync-failed', error.message)
       } else {
         setStatus('sync-failed')
         setLoadMessage(error instanceof Error ? error.message : '另存新檔同步失敗。')
       }
     } finally {
       savingRef.current = false
+      setSaveActive(false)
+      fileInteractionRef.current = false
+      autosaveRef.current?.resume()
     }
   }, [rememberBoundHandle])
 
@@ -808,9 +909,13 @@ function App() {
         ))
         if (currentWorkbookRef.current?.id === renamed.id) {
           revisionRef.current = renamed.revision
+          baseUpdatedAtRef.current = renamed.updated_at
+          currentWorkbookRef.current = { ...currentWorkbookRef.current, name: renamed.name, revision: renamed.revision, updated_at: renamed.updated_at }
           setCurrentWorkbook((current) => current ? { ...current, name: renamed.name, revision: renamed.revision, updated_at: renamed.updated_at } : current)
           setLoadMessage('Tiger 顯示名稱已更新；本機實體檔名不變。請儲存以同步檔案內容。')
           setStatus('unsaved')
+          changeGenerationRef.current += 1
+          autosaveRef.current?.mutation()
         }
         setNameDialog(null)
       }
@@ -829,6 +934,7 @@ function App() {
     try {
       await deleteWorkbook(deleteTarget.id)
       await forgetNativeFileHandle(deleteTarget.id)
+      try { await recoveryStore.remove(deleteTarget.id) } catch { setLoadMessage('文件已刪除，但本機復原記錄清理失敗；請清除瀏覽器的 Tiger 復原儲存區。') }
       setWorkbooks((items) => items.filter((item) => item.id !== deleteTarget.id))
       setDeleteTarget(null)
     } catch (error: unknown) {
@@ -858,7 +964,7 @@ function App() {
     }
   }, [pendingNavigation, performNavigation, save])
 
-  const canSave = status !== 'loading' && status !== 'load-error' && status !== 'saving'
+  const canSave = status !== 'loading' && status !== 'load-error'
 
   const closeSafeSort = useCallback(() => {
     setSafeSortSelection(null)
@@ -1036,6 +1142,19 @@ function App() {
   const canUseSafeSort = status !== 'loading' && status !== 'load-error' && !safeSortPending
   const canEnableFilter = status !== 'loading' && status !== 'load-error' && !filterPending
 
+  const chooseRecovery = async (restore: boolean) => {
+    if (!recoveryPrompt || documentActionPending) return
+    setDocumentActionPending(true)
+    try {
+      if (!restore) await recoveryStore.acknowledge(recoveryPrompt.record.workbookId, recoveryPrompt.record.sessionId, recoveryPrompt.record.generation)
+      recoveryDecisionRef.current = { workbookId: recoveryPrompt.committed.id, record: restore ? recoveryPrompt.record : null }
+      setRecoveryPrompt(null)
+      setStatus('loading')
+      setReloadToken((value) => value + 1)
+    } catch (error) { setRecoveryWarning(error instanceof Error ? error.message : '無法清理復原資料；尚未替換目前版本。') }
+    finally { setDocumentActionPending(false) }
+  }
+
   if (!currentWorkbook) {
     return (
       <>
@@ -1107,18 +1226,19 @@ function App() {
           <button type="button" className="secondary-button compact-button" onClick={() => requestNavigation('new')}>新增活頁簿</button>
           <button type="button" className="secondary-button compact-button" onClick={requestOpenLocal}>開啟本機檔案</button>
           <button type="button" className="secondary-button compact-button" onClick={requestCsvImport} disabled={csvPending}>匯入 CSV</button>
-          <button type="button" className="secondary-button compact-button" onClick={requestCsvExport} disabled={csvPending || !canSave}>匯出 CSV</button>
-          <button type="button" className="secondary-button compact-button" onClick={requestXlsxImport} disabled={xlsx.busy || csvPending || !canSave}>匯入 XLSX</button>
-          <button type="button" className="secondary-button compact-button" onClick={() => void xlsx.inspectExport()} disabled={xlsx.busy || csvPending || !canSave}>匯出 XLSX</button>
+          <button type="button" className="secondary-button compact-button" onClick={requestCsvExport} disabled={csvPending || !canSave || saveActive}>匯出 CSV</button>
+          <button type="button" className="secondary-button compact-button" onClick={requestXlsxImport} disabled={xlsx.busy || csvPending || !canSave || saveActive}>匯入 XLSX</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => void xlsx.inspectExport()} disabled={xlsx.busy || csvPending || !canSave || saveActive}>匯出 XLSX</button>
           {xlsx.notice && <span role="status">{xlsx.notice}</span>}
-          <button type="button" className="secondary-button compact-button" onClick={() => void saveAs()} disabled={!canSave}>另存新檔</button>
-          <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'rename', target: currentWorkbook })}>重新命名</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => void saveAs()} disabled={!canSave || saveActive}>另存新檔</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'rename', target: currentWorkbook })} disabled={saveActive}>重新命名</button>
           {safeSortNotice && <span className="safe-sort-notice" role="status">{safeSortNotice}</span>}
           {filterNotice && <span className="filter-notice" role="status">{filterNotice}</span>}
           {filterError && <span className="filter-error" role="alert">{filterError}</span>}
           {csvNotice && <span className="filter-notice" role="status">{csvNotice}</span>}
           {csvError && <span className="filter-error" role="alert">{csvError}</span>}
           {loadMessage && status !== 'load-error' && <span className="filter-error" role="alert">{loadMessage}</span>}
+          {recoveryWarning && <span className="filter-error" role="alert">{recoveryWarning}</span>}
           <button
             type="button"
             className="filter-button"
@@ -1138,6 +1258,8 @@ function App() {
             安全排序
           </button>
           <div className="save-controls">
+            <label className="autosave-control"><input type="checkbox" checked={autosaveEnabled} onChange={(event) => setAutosaveEnabled(event.target.checked)} data-testid="autosave-setting" />自動儲存：{autosaveEnabled ? '開' : '關'}</label>
+            {autosaveEnabled && !boundFileName && <span>請先儲存並選擇 .tws.json</span>}
             <span className={`save-status save-status--${status}`} data-testid="save-status">
               {statusLabels[status]}
             </span>
@@ -1256,17 +1378,23 @@ function App() {
       onCancel={() => setNameDialog(null)}
     />}
     {pendingNavigation && <UnsavedDialog
-      pending={documentActionPending}
+      pending={documentActionPending || saveActive}
       onSave={saveAndNavigate}
       onDiscard={() => {
         const action = pendingNavigation
+        autosaveRef.current?.dispose()
+        autosaveRef.current = null
+        if (currentWorkbookRef.current) void recoveryStore.remove(currentWorkbookRef.current.id).catch(() => setRecoveryWarning('復原資料清理失敗；請勿將舊復原資料誤認為新變更。'))
         setPendingNavigation(null)
         if (action === 'open-local') {
           void openLocalFile()
+          setStatus('loading'); setReloadToken((value) => value + 1)
         } else if (action === 'import-csv') {
           void importCsvFile()
+          setStatus('loading'); setReloadToken((value) => value + 1)
         } else if (action === 'import-xlsx') {
           void xlsx.importFile()
+          setStatus('loading'); setReloadToken((value) => value + 1)
         } else {
           performNavigation(action, true)
         }
@@ -1299,6 +1427,9 @@ function App() {
       onCancel={() => setCsvExportSheets(null)}
     />}
     {xlsx.dialogs}
+    {recoveryPrompt && <RecoveryDialog conflict={recoveryPrompt.conflict} pending={documentActionPending}
+      onRestore={() => void chooseRecovery(true)} onStored={() => void chooseRecovery(false)}
+      onCancel={() => { setRecoveryPrompt(null); recoveryDecisionRef.current = null; openingStatusRef.current = null; setCurrentWorkbook(null); setHomeReloadToken((value) => value + 1) }} />}
     </>
   )
 }

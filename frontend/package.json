@@ -12,6 +12,7 @@
     "validate:phase1e-local-files": "node scripts/phase1e-local-file-check.mjs",
     "validate:phase1f-csv": "node scripts/phase1f-csv-check.mjs",
     "validate:phase1g-xlsx": "node scripts/phase1g-xlsx-check.mjs",
+    "validate:phase1h-autosave": "node scripts/phase1h-autosave-check.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -37,6 +38,7 @@
     "eslint": "10.12.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.7",
+    "fake-indexeddb": "6.2.5",
     "globals": "17.13.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.1",

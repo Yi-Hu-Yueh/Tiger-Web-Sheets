@@ -577,3 +577,4 @@ dialog.xlsx-dialog {
 dialog.xlsx-dialog::backdrop { background: rgb(15 23 42 / 45%); }
 dialog.xlsx-dialog button { margin: 8px; padding: 8px 14px; }
 dialog.xlsx-dialog li { margin: 8px 0; }
+.autosave-control { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 13px; }

@@ -1,6 +1,6 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets Phase 1E is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics, while preserving Univer's native open-source spreadsheet operations, formatting, formulas, sort model, filter, find, and replace UI.
+Tiger Web Sheets Phase 1H is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and a project-local SQLite database with manual Save, debounced autosave, local crash recovery, and optimistic-revision semantics, while preserving Univer's native open-source spreadsheet operations, formatting, formulas, sort model, filter, find, and replace UI. Phase 1H desktop runtime acceptance remains HUMAN_RUNTIME_TEST_REQUIRED.
 
 ## Architecture
 
@@ -8,6 +8,7 @@ Tiger Web Sheets Phase 1E is a persistent local workbook manager and browser spr
 - Spreadsheet: `@univerjs/presets`, `@univerjs/preset-sheets-core`, `@univerjs/preset-sheets-sort`, `@univerjs/preset-sheets-filter`, and `@univerjs/preset-sheets-find-replace` 1.0.3
 - Backend: FastAPI 0.128.2 on Python 3.11.3
 - Storage: SQLite plus an atomic native `.tws.json` mirror for every committed workbook
+- Recovery: bounded browser-local IndexedDB checkpoints; only the autosave setting uses localStorage
 - Stored format: complete Tiger-Web-Sheets/Univer workbook snapshot JSON, not an XLSX file
 - Frontend URL: <http://127.0.0.1:5173/>
 - Backend health URL: <http://127.0.0.1:18085/api/health>
@@ -143,7 +144,15 @@ Verified native operations include:
 
 For identifiers that must retain a leading zero, select the cells and apply the native **Text / 文字** number format before entering or pasting the values. This was verified with `00123`, `0912345678`, and `01234567`; the saved cell values remain strings after reload and backend restart.
 
-Phase 1B operations that mutate persisted workbook state change the header status to `未儲存`. A successful manual save returns it through `儲存中` to `已儲存`. Values, formulas, worksheets, dimensions, hidden state, formatting, merges, freeze state, zoom, number formats, and leading-zero text are stored inside the complete Univer snapshot.
+Phase 1B operations that mutate persisted workbook state change the header status to `未儲存`. A successful native save returns it through `儲存中` to `已儲存`. Autosave is enabled by default after a committed workbook has a native file binding, waits 3 seconds after the last real mutation, and shares the manual Save pipeline. Unbound new/imported workbooks require the first explicit Save/picker. Selection and formula-engine results do not trigger autosave. Values, formulas, worksheets, dimensions, hidden state, formatting, merges, freeze state, zoom, number formats, and leading-zero text are stored inside the complete Univer snapshot.
+
+## Autosave and crash recovery (Phase 1H)
+
+The header's **自動儲存：開 / 關** checkbox disables/enables automatic saves without disabling manual Save or local recovery. All required native targets (SQLite, managed mirror, and bound user `.tws.json`) must succeed before **已儲存**. Permission loss pauses autosave without opening dialogs; press **儲存** to reauthorize or use **另存新檔**. Other failures and HTTP 409 conflicts also pause automatic retries rather than overwrite data or repeatedly notify.
+
+Dirty edits get an independent IndexedDB checkpoint after 500 ms of inactivity, with a 2-second maximum wait during continuous edits. On reopening, a differing checkpoint prompts **偵測到未完成儲存的復原資料** with **復原 / 使用已儲存版本 / 取消**. Recovery never silently replaces committed content; stale-base recovery remains revision-conflict protected. Recovery is latest-per-workbook, limited to 16 MiB per snapshot, 64 MiB of snapshot payload, 32 workbooks, and seven days. Snapshot/quota/storage failures are visible.
+
+CSV/XLSX remain explicit exchange operations; autosave never exports them. Before-unload protection includes active saves, but neither shutdown network completion nor edits inside the checkpoint delay are guaranteed. See [docs/PHASE1H_AUTOSAVE_RECOVERY.md](docs/PHASE1H_AUTOSAVE_RECOVERY.md) for semantics, validation scope, and the owner’s 33-step runtime checkpoint.
 
 ## Phase 1C formula compatibility baseline
 
