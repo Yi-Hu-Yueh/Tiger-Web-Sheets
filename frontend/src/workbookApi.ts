@@ -1,4 +1,5 @@
 import type { IWorkbookData } from '@univerjs/core'
+import type { NativeWorkbookDocument } from './files/nativeFileAccess'
 
 export type WorkbookSummary = {
   id: string
@@ -81,6 +82,24 @@ export function createWorkbook(name: string, snapshot: IWorkbookData): Promise<P
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, snapshot }),
   })
+}
+
+export function importNativeWorkbook(
+  name: string,
+  document: NativeWorkbookDocument,
+): Promise<PersistedWorkbook> {
+  return api('/api/native-files/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, document }),
+  })
+}
+
+export function loadNativeDocument(
+  id: string,
+  signal?: AbortSignal,
+): Promise<NativeWorkbookDocument> {
+  return api(`/api/workbooks/${encodeURIComponent(id)}/native`, { signal })
 }
 
 export function saveWorkbook(

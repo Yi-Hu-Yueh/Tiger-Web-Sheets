@@ -99,6 +99,12 @@ button {
   color: #66736b;
 }
 
+.home-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .workbook-list {
   display: grid;
   gap: 12px;
@@ -257,6 +263,15 @@ button {
   white-space: nowrap;
 }
 
+.bound-file-name {
+  overflow: hidden;
+  max-width: 260px;
+  color: #718078;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-actions,
 .save-controls {
   display: flex;
@@ -265,6 +280,8 @@ button {
 }
 
 .app-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 7px;
 }
 
@@ -306,6 +323,10 @@ button {
 
 .save-status--failed,
 .save-status--conflict,
+.save-status--external-failed,
+.save-status--sync-failed,
+.save-status--permission-required,
+.save-status--unsupported,
 .save-status--load-error {
   color: #b42318;
 }

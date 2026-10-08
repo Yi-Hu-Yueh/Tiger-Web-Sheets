@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "validate:phase1d": "node scripts/phase1d-runtime-check.mjs",
     "validate:phase1d-safe-sort": "node scripts/phase1d-safe-sort-check.mjs",
+    "validate:phase1e-local-files": "node scripts/phase1e-local-file-check.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

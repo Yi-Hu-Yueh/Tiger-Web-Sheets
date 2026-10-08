@@ -106,6 +106,16 @@ SQLite remains the transactional source of truth for identity, name, revision, t
 
 Save As creates another ID and another native file. Rename keeps the same physical filename. Delete first quarantines the target mirror, commits the SQLite deletion, and then removes the quarantine; unrelated workbook files are untouched. See [docs/PHASE1E_DISK_STORAGE.md](docs/PHASE1E_DISK_STORAGE.md) for the protocol and recovery boundaries.
 
+## Phase 1E-R2 user-selected local files
+
+Supported desktop Chrome and Edge users can choose a real local `.tws.json` file with the browser's File System Access API. **開啟本機檔案** calls the native Open picker. A workbook without a linked external file calls the native Save picker on its first **儲存**; later saves reuse the bound handle. **另存新檔** always calls the Save picker, creates a new Tiger workbook identity, and writes an independent external file.
+
+The header shows only the browser-exposed filename, for example `本機檔案：客戶名單.tws.json`. Web browsers do not expose a trustworthy absolute Windows path, so Tiger never fabricates or sends one to the backend. File handles remain browser-owned, are kept for the current session, and are stored in IndexedDB where structured cloning is supported. Permission is queried on reuse and requested only from a Save user gesture. If permission cannot be restored, the UI directs the user to Save As.
+
+SQLite and `workbooks\<id>.tws.json` remain the internal transactional/recovery layer. The user-selected file is a separate external copy using the same native schema. Tiger shows **已儲存** only after the internal commit, native-document retrieval, external write, and read-back verification all succeed. A failed external write leaves the internal recovery commit intact and reports **本機檔案儲存失敗** for retry. Picker cancellation creates no new commit or file association.
+
+Opening validates JSON, format/version, identity, revision, SHA-256, and the complete snapshot before registration. A matching internal identity opens normally. A conflicting identity is never overwritten silently; the user may cancel or explicitly open it as a new copy. Renaming changes Tiger display metadata but not the physical filename. Deleting from the Tiger document manager removes only SQLite and the managed mirror; an external user-selected file is preserved. See [docs/PHASE1E_LOCAL_FILE_WORKFLOW.md](docs/PHASE1E_LOCAL_FILE_WORKFLOW.md).
+
 ## Phase 1B spreadsheet operations
 
 The installed Univer 1.0.3 open-source presets provide the grid, clipboard, native undo/redo stack, row and column context menus, worksheet tabs, freeze controls, zoom, cell formatting, merge/unmerge, and number formats. Tiger Web Sheets persists their workbook snapshot state without adding parallel spreadsheet implementations.
@@ -157,6 +167,8 @@ Detailed evidence, exact sort orders, filter persistence semantics, the formula-
 - `PATCH /api/workbooks/{workbook_id}`
 - `DELETE /api/workbooks/{workbook_id}`
 - `GET /api/workbooks/{workbook_id}/storage`
+- `GET /api/workbooks/{workbook_id}/native`
+- `POST /api/native-files/import`
 
 POST creates a collision-resistant UUID record and never overwrites an existing document. PUT contains the complete Univer snapshot and `expected_revision`; PATCH renames metadata without changing snapshot contents or identity. Committed saves and renames increment that workbook's revision. A stale expected revision returns HTTP 409. Existing `default` records are listed and opened normally and remain compatible with the legacy first-save PUT path.
 
@@ -181,6 +193,8 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 ## Current limitations
 
 - Autosave remains intentionally unsupported; manual Save is authoritative.
+- Native Open/Save pickers require a secure-context desktop Chrome or Edge implementation of the File System Access API.
+- Browser file permissions may need to be granted again after reload or browser restart.
 - Single-column sorting of a multi-column record set is unsupported; the normal-looking Univer quick-sort actions are not exposed. Use the documented **安全排序** workflow.
 - Self-row-derived formula columns must remain outside the tested sort rectangle; Univer 1.0.3 does not rewrite those moved formula references in the diagnostic included-column path.
 - Generic TSV paste can auto-convert leading-zero values before sorting; this owner-observed issue remains for a dedicated repair. The sort fixture stores phone numbers as strings and verifies that sorting itself preserves them.

@@ -10,6 +10,8 @@ from app.database import connect, resolve_runtime_identity
 from app.models import WorkbookRecord
 from app.schemas import (
     HealthResponse,
+    NativeWorkbookDocument,
+    NativeWorkbookImportRequest,
     WorkbookCreateRequest,
     WorkbookRenameRequest,
     WorkbookResponse,
@@ -18,7 +20,11 @@ from app.schemas import (
     WorkbookWriteRequest,
 )
 from app.services.native_workbook_storage import NativeWorkbookError
-from app.services.workbook_store import WorkbookConflictError, WorkbookStore
+from app.services.workbook_store import (
+    NativeWorkbookCollisionError,
+    WorkbookConflictError,
+    WorkbookStore,
+)
 
 CANONICAL_WORKBOOK_ID = "default"
 
@@ -104,6 +110,27 @@ def create_app(
             raise HTTPException(status_code=503, detail="create failed") from error
         return _response(record)
 
+    @application.post(
+        "/api/native-files/import",
+        response_model=WorkbookResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def import_native_workbook(
+        payload: NativeWorkbookImportRequest, request: Request
+    ) -> WorkbookResponse:
+        try:
+            record = request.app.state.workbook_store.import_native(
+                payload.name,
+                payload.document.model_dump(mode="json"),
+            )
+        except NativeWorkbookCollisionError as error:
+            raise HTTPException(status_code=409, detail="native workbook identity collision") from error
+        except NativeWorkbookError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except (sqlite3.Error, OSError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="native workbook import failed") from error
+        return _response(record)
+
     @application.get("/api/workbooks/{workbook_id}", response_model=WorkbookResponse)
     def get_workbook(workbook_id: str, request: Request) -> WorkbookResponse:
         try:
@@ -154,6 +181,21 @@ def create_app(
             snapshot_sha256=storage.snapshot_sha256,
             integrity=storage.integrity,
         )
+
+    @application.get(
+        "/api/workbooks/{workbook_id}/native",
+        response_model=NativeWorkbookDocument,
+    )
+    def workbook_native_document(
+        workbook_id: str, request: Request
+    ) -> NativeWorkbookDocument:
+        try:
+            document = request.app.state.workbook_store.native_document(workbook_id)
+        except (sqlite3.Error, OSError, NativeWorkbookError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="native workbook unavailable") from error
+        if document is None:
+            raise HTTPException(status_code=404, detail="workbook not found")
+        return NativeWorkbookDocument.model_validate(document)
 
     @application.patch("/api/workbooks/{workbook_id}", response_model=WorkbookResponse)
     def rename_workbook(

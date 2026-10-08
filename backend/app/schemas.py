@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -68,6 +68,27 @@ class WorkbookCreateRequest(BaseModel):
     snapshot: dict[str, Any]
 
     _validate_snapshot = field_validator("snapshot")(WorkbookWriteRequest.validate_snapshot.__func__)
+
+
+class NativeWorkbookDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["tiger-web-sheets"]
+    format_version: Literal[1]
+    workbook_id: str = Field(min_length=1, max_length=128)
+    revision: int = Field(ge=1)
+    saved_at: datetime
+    snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    snapshot: dict[str, Any]
+
+    _validate_snapshot = field_validator("snapshot")(WorkbookWriteRequest.validate_snapshot.__func__)
+
+
+class NativeWorkbookImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    document: NativeWorkbookDocument
 
 
 class WorkbookRenameRequest(BaseModel):

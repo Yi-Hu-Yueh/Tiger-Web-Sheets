@@ -74,3 +74,24 @@ export function UnsavedDialog({ pending, onSave, onDiscard, onCancel }: {
     </div>
   )
 }
+
+export function NativeCollisionDialog({ filename, pending, onCopy, onCancel }: {
+  filename: string
+  pending: boolean
+  onCopy: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="modal-backdrop">
+      <div className="document-dialog" role="alertdialog" aria-modal="true" aria-labelledby="native-collision-title">
+        <h2 id="native-collision-title">本機檔案識別衝突</h2>
+        <p>「{filename}」的文件識別已存在，但內容或版本不同。Tiger 不會覆寫既有文件。</p>
+        <p>選擇「以副本開啟」會建立新的 Tiger 文件識別；所選檔案要等您按下儲存後才會更新。</p>
+        <div className="dialog-actions">
+          <button type="button" className="secondary-button" onClick={onCancel} disabled={pending}>取消</button>
+          <button type="button" className="primary-button" onClick={onCopy} disabled={pending}>{pending ? '建立副本中…' : '以副本開啟'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}

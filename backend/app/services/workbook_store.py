@@ -20,6 +20,10 @@ class WorkbookConflictError(Exception):
     """Raised when a client tries to save against a stale revision."""
 
 
+class NativeWorkbookCollisionError(Exception):
+    """Raised when an imported native identity disagrees with SQLite."""
+
+
 class WorkbookStore:
     def __init__(self, database_path: Path, workbook_root: Path) -> None:
         self.database_path = database_path
@@ -62,6 +66,82 @@ class WorkbookStore:
     def storage_status(self, workbook_id: str) -> NativeWorkbookStatus | None:
         record = self.get(workbook_id)
         return self.native_storage.verify(record) if record is not None else None
+
+    def native_document(self, workbook_id: str) -> dict[str, Any] | None:
+        record = self.get(workbook_id)
+        return self.native_storage.verified_document(record) if record is not None else None
+
+    def import_native(
+        self,
+        name: str,
+        document: dict[str, Any],
+    ) -> WorkbookRecord:
+        imported = self.native_storage.record_from_document(document, name)
+        snapshot_json = json.dumps(
+            imported.snapshot, ensure_ascii=False, separators=(",", ":")
+        )
+        timestamp = imported.updated_at.isoformat()
+        connection = connect(self.database_path)
+        previous_native: bytes | None = None
+        native_changed = False
+        committed = False
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                """
+                SELECT id, name, snapshot_json, revision, created_at, updated_at
+                FROM workbooks WHERE id = ?
+                """,
+                (imported.id,),
+            ).fetchone()
+            if current is not None:
+                existing = self._to_record(current)
+                if (
+                    existing.revision != imported.revision
+                    or existing.snapshot != imported.snapshot
+                ):
+                    raise NativeWorkbookCollisionError(
+                        "native workbook identity collides with different committed content"
+                    )
+                self.native_storage.verify(existing)
+                connection.rollback()
+                return existing
+
+            previous_native = self.native_storage.read_bytes(imported.id)
+            if previous_native is not None:
+                raise NativeWorkbookCollisionError(
+                    "native workbook identity collides with an unmanaged mirror file"
+                )
+            self.native_storage.write_record(imported)
+            native_changed = True
+            self.native_storage.verify(imported)
+            connection.execute(
+                """
+                INSERT INTO workbooks (
+                    id, name, snapshot_json, revision, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    imported.id,
+                    imported.name,
+                    snapshot_json,
+                    imported.revision,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            self._commit(connection)
+            committed = True
+        except Exception:
+            connection.rollback()
+            if not committed and native_changed:
+                self._restore_native(imported.id, previous_native)
+            raise
+        finally:
+            connection.close()
+
+        self._verify_or_recover(imported)
+        return imported
 
     def create(self, name: str, snapshot: dict[str, Any]) -> WorkbookRecord:
         return self.put(str(uuid.uuid4()), name, snapshot, expected_revision=0)

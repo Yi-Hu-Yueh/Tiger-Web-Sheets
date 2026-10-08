@@ -17,12 +17,33 @@ import {
 } from '@univerjs/preset-sheets-sort'
 import { createUniver, mergeLocales } from '@univerjs/presets'
 import WorkbookHome from './WorkbookHome'
-import { DeleteDialog, NameDialog, UnsavedDialog } from './WorkbookDialogs'
+import { DeleteDialog, NameDialog, NativeCollisionDialog, UnsavedDialog } from './WorkbookDialogs'
+import {
+  bindNativeFileHandle,
+  chooseNativeOpenFile,
+  chooseNativeSaveFile,
+  commitThenWriteNativeFile,
+  ensureWritePermission,
+  forgetNativeFileHandle,
+  NativeFileAccessUnsupportedError,
+  NativeFilePermissionError,
+  NativePersistenceError,
+  nativeDocumentsMatch,
+  permissionState,
+  readNativeWorkbook,
+  restoreNativeFileHandle,
+  workbookNameFromFilename,
+  writeNativeWorkbook,
+  type NativeFileHandle,
+  type NativeWorkbookDocument,
+} from './files/nativeFileAccess'
 import {
   ApiError,
   createWorkbook,
   deleteWorkbook,
+  importNativeWorkbook,
   listWorkbooks,
+  loadNativeDocument,
   loadWorkbook,
   renameWorkbook,
   saveWorkbook,
@@ -94,6 +115,10 @@ type SaveStatus =
   | 'saved'
   | 'failed'
   | 'conflict'
+  | 'external-failed'
+  | 'sync-failed'
+  | 'permission-required'
+  | 'unsupported'
   | 'load-error'
 
 type SafeSortSelection = {
@@ -122,6 +147,10 @@ const statusLabels: Record<SaveStatus, string> = {
   saved: '已儲存',
   failed: '儲存失敗',
   conflict: '儲存衝突',
+  'external-failed': '本機檔案儲存失敗',
+  'sync-failed': '同步失敗',
+  'permission-required': '本機檔案需重新授權',
+  unsupported: '不支援本機檔案',
   'load-error': '後端連線失敗',
 }
 
@@ -133,6 +162,17 @@ function App() {
   const currentWorkbookRef = useRef<PersistedWorkbook | null>(null)
   const changeGenerationRef = useRef(0)
   const savingRef = useRef(false)
+  const boundFileHandleRef = useRef<NativeFileHandle | null>(null)
+  const pendingExternalWriteRef = useRef<{
+    workbookId: string
+    document: NativeWorkbookDocument
+    generation: number
+  } | null>(null)
+  const openingStatusRef = useRef<{
+    workbookId: string
+    status: SaveStatus
+    message?: string
+  } | null>(null)
   const [status, setStatus] = useState<SaveStatus>('loading')
   const [loadMessage, setLoadMessage] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
@@ -146,22 +186,33 @@ function App() {
   const [filterPending, setFilterPending] = useState(false)
   const [filterNotice, setFilterNotice] = useState('')
   const [filterError, setFilterError] = useState('')
+  const [boundFileName, setBoundFileName] = useState<string | null>(null)
   const [currentWorkbook, setCurrentWorkbook] = useState<PersistedWorkbook | null>(null)
   const [workbooks, setWorkbooks] = useState<WorkbookSummary[]>([])
   const [homeLoading, setHomeLoading] = useState(true)
   const [homeError, setHomeError] = useState('')
   const [homeReloadToken, setHomeReloadToken] = useState(0)
   const [nameDialog, setNameDialog] = useState<{
-    mode: 'new' | 'save-as' | 'rename'
+    mode: 'new' | 'rename'
     target?: WorkbookSummary
+  } | null>(null)
+  const [nativeCollision, setNativeCollision] = useState<{
+    handle: NativeFileHandle
+    document: NativeWorkbookDocument
   } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<WorkbookSummary | null>(null)
   const [documentActionPending, setDocumentActionPending] = useState(false)
-  const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | null>(null)
+  const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | 'open-local' | null>(null)
 
   useEffect(() => {
     currentWorkbookRef.current = currentWorkbook
   }, [currentWorkbook])
+
+  const rememberBoundHandle = useCallback((workbookId: string, handle: NativeFileHandle) => {
+    boundFileHandleRef.current = handle
+    setBoundFileName(handle.name)
+    void bindNativeFileHandle(workbookId, handle)
+  }, [])
 
   useEffect(() => {
     if (currentWorkbook) return
@@ -182,8 +233,9 @@ function App() {
   useEffect(() => {
     const workbookToOpen = currentWorkbookRef.current
     if (!workbookToOpen) return
-    const snapshotToOpen = workbookToOpen.snapshot
-    const revisionToOpen = workbookToOpen.revision
+    const openedWorkbook = workbookToOpen
+    const snapshotToOpen = openedWorkbook.snapshot
+    const revisionToOpen = openedWorkbook.revision
     const abortController = new AbortController()
     let disposed = false
     let univerInstance: ReturnType<typeof createUniver>['univer'] | null = null
@@ -193,6 +245,8 @@ function App() {
     apiRef.current = null
     revisionRef.current = 0
     changeGenerationRef.current = 0
+    boundFileHandleRef.current = null
+    setBoundFileName(null)
 
     async function initialize() {
       if (disposed || !containerRef.current) return
@@ -242,7 +296,41 @@ function App() {
         }),
       )
 
-      setStatus('saved')
+      const openingStatus = openingStatusRef.current?.workbookId === openedWorkbook.id
+        ? openingStatusRef.current
+        : null
+      if (openingStatus) openingStatusRef.current = null
+
+      try {
+        const restoredHandle = await restoreNativeFileHandle(openedWorkbook.id)
+        if (restoredHandle) {
+          boundFileHandleRef.current = restoredHandle
+          setBoundFileName(restoredHandle.name)
+        }
+        if (openingStatus) {
+          if (openingStatus.message) setLoadMessage(openingStatus.message)
+          setStatus(openingStatus.status)
+        } else if (!restoredHandle) {
+          setStatus('unsaved')
+        } else if (await permissionState(restoredHandle, 'readwrite') !== 'granted') {
+          setLoadMessage('請按儲存重新授權，或使用另存新檔重新選擇檔案。')
+          setStatus('permission-required')
+        } else {
+          const [externalDocument, internalDocument] = await Promise.all([
+            readNativeWorkbook(restoredHandle),
+            loadNativeDocument(openedWorkbook.id),
+          ])
+          if (nativeDocumentsMatch(externalDocument, internalDocument)) {
+            setStatus('saved')
+          } else {
+            setLoadMessage('本機檔案與 Tiger 內部復原副本不同步；請儲存或使用另存新檔。')
+            setStatus('external-failed')
+          }
+        }
+      } catch (error: unknown) {
+        setLoadMessage(error instanceof Error ? error.message : '無法驗證已連結的本機檔案。')
+        setStatus('external-failed')
+      }
     }
 
     initialize().catch((error: unknown) => {
@@ -263,35 +351,95 @@ function App() {
 
   const save = useCallback(async () => {
     const workbook = workbookRef.current
-    const univerAPI = apiRef.current
     const current = currentWorkbookRef.current
-    if (!workbook || !univerAPI || !current || savingRef.current) return false
+    if (!workbook || !current || savingRef.current) return false
+    setLoadMessage('')
 
-    savingRef.current = true
-    setStatus('saving')
+    let handle = boundFileHandleRef.current
+    if (!handle) {
+      try {
+        handle = await chooseNativeSaveFile(current.name)
+      } catch (error: unknown) {
+        setLoadMessage(error instanceof Error ? error.message : '無法選擇本機儲存檔案。')
+        setStatus(error instanceof NativeFileAccessUnsupportedError ? 'unsupported' : 'external-failed')
+        return false
+      }
+      if (!handle) {
+        setStatus('unsaved')
+        return false
+      }
+      rememberBoundHandle(current.id, handle)
+    }
 
     try {
-      const generationAtSnapshot = changeGenerationRef.current
+      await ensureWritePermission(handle)
+    } catch (error: unknown) {
+      setLoadMessage(error instanceof Error ? error.message : '無法取得本機檔案寫入權限。')
+      setStatus('permission-required')
+      return false
+    }
+
+    savingRef.current = true
+    setLoadMessage('')
+    setStatus('saving')
+    const generationAtSnapshot = changeGenerationRef.current
+
+    try {
+      const pendingExternal = pendingExternalWriteRef.current
+      if (pendingExternal?.workbookId === current.id && pendingExternal.generation === generationAtSnapshot) {
+        await writeNativeWorkbook(handle, pendingExternal.document)
+        pendingExternalWriteRef.current = null
+        setStatus('saved')
+        return true
+      }
+
       const snapshot = workbook.save()
-      const [persisted] = await Promise.all([
-        saveWorkbook(current.id, current.name, snapshot, revisionRef.current),
-        new Promise((resolve) => window.setTimeout(resolve, 300)),
-      ])
+      const { committed: persisted } = await commitThenWriteNativeFile(
+        handle,
+        () => saveWorkbook(current.id, current.name, snapshot, revisionRef.current),
+        (record) => loadNativeDocument(record.id),
+      )
       revisionRef.current = persisted.revision
       setCurrentWorkbook(persisted)
+      pendingExternalWriteRef.current = null
       setStatus(
         changeGenerationRef.current === generationAtSnapshot ? 'saved' : 'unsaved',
       )
       return true
     } catch (error: unknown) {
-      setStatus(error instanceof ApiError && error.status === 409 ? 'conflict' : 'failed')
+      if (error instanceof NativePersistenceError) {
+        const committed = error.committed as PersistedWorkbook | undefined
+        if (committed) {
+          revisionRef.current = committed.revision
+          setCurrentWorkbook(committed)
+        }
+        if (error.stage === 'external' && error.document && committed) {
+          pendingExternalWriteRef.current = {
+            workbookId: committed.id,
+            document: error.document,
+            generation: generationAtSnapshot,
+          }
+        }
+        const cause = error.cause
+        if (error.stage === 'internal' && cause instanceof ApiError && cause.status === 409) {
+          setStatus('conflict')
+        } else if (cause instanceof NativeFilePermissionError) {
+          setStatus('permission-required')
+        } else {
+          setStatus(error.stage === 'external' ? 'external-failed' : 'sync-failed')
+        }
+        setLoadMessage(error.message)
+      } else {
+        setLoadMessage(error instanceof Error ? error.message : '本機檔案儲存失敗。')
+        setStatus(error instanceof NativeFilePermissionError ? 'permission-required' : 'external-failed')
+      }
       return false
     } finally {
       savingRef.current = false
     }
-  }, [])
+  }, [rememberBoundHandle])
 
-  const isDirty = status === 'unsaved' || status === 'failed' || status === 'conflict'
+  const isDirty = status === 'unsaved' || status === 'failed' || status === 'conflict' || status === 'external-failed' || status === 'sync-failed' || status === 'permission-required' || status === 'unsupported'
 
   useEffect(() => {
     if (!isDirty) return
@@ -317,6 +465,134 @@ function App() {
     }
   }, [])
 
+  const openLocalFile = useCallback(async () => {
+    setHomeError('')
+    setLoadMessage('')
+    let handle: NativeFileHandle | null = null
+    try {
+      handle = await chooseNativeOpenFile()
+      if (!handle) return
+      const document = await readNativeWorkbook(handle)
+      const persisted = await importNativeWorkbook(
+        workbookNameFromFilename(handle.name),
+        document,
+      )
+      pendingExternalWriteRef.current = null
+      rememberBoundHandle(persisted.id, handle)
+      openingStatusRef.current = { workbookId: persisted.id, status: 'saved' }
+      setStatus('loading')
+      setCurrentWorkbook(persisted)
+      setReloadToken((value) => value + 1)
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.status === 409 && handle) {
+        try {
+          const document = await readNativeWorkbook(handle)
+          setNativeCollision({ handle, document })
+          return
+        } catch (validationError: unknown) {
+          const message = validationError instanceof Error ? validationError.message : '本機檔案驗證失敗。'
+          setLoadMessage(message)
+          return
+        }
+      }
+      const message = error instanceof Error ? error.message : '無法開啟本機檔案。'
+      setLoadMessage(message)
+    }
+  }, [rememberBoundHandle])
+
+  const openCollisionAsCopy = useCallback(async () => {
+    if (!nativeCollision) return
+    setDocumentActionPending(true)
+    try {
+      const name = `${workbookNameFromFilename(nativeCollision.handle.name)}-副本`
+      const created = await createWorkbook(name, nativeCollision.document.snapshot)
+      pendingExternalWriteRef.current = null
+      rememberBoundHandle(created.id, nativeCollision.handle)
+      openingStatusRef.current = {
+        workbookId: created.id,
+        status: 'unsaved',
+        message: '已建立獨立副本；按儲存後才會以新的文件識別更新所選本機檔案。',
+      }
+      setNativeCollision(null)
+      setStatus('loading')
+      setCurrentWorkbook(created)
+      setReloadToken((value) => value + 1)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '無法建立獨立副本。'
+      if (currentWorkbookRef.current) setLoadMessage(message)
+      else setHomeError(message)
+    } finally {
+      setDocumentActionPending(false)
+    }
+  }, [nativeCollision, rememberBoundHandle])
+
+  const saveAs = useCallback(async () => {
+    const workbook = workbookRef.current
+    const current = currentWorkbookRef.current
+    if (!workbook || !current || savingRef.current) return
+    setLoadMessage('')
+
+    let handle: NativeFileHandle | null
+    try {
+      handle = await chooseNativeSaveFile(`${current.name}-備份`)
+    } catch (error: unknown) {
+      setLoadMessage(error instanceof Error ? error.message : '無法選擇另存新檔位置。')
+      if (error instanceof NativeFileAccessUnsupportedError) setStatus('unsupported')
+      return
+    }
+    if (!handle) return
+
+    try {
+      await ensureWritePermission(handle)
+    } catch (error: unknown) {
+      setLoadMessage(error instanceof Error ? error.message : '無法取得本機檔案寫入權限。')
+      setStatus('permission-required')
+      return
+    }
+
+    savingRef.current = true
+    setLoadMessage('')
+    setStatus('saving')
+    try {
+      const snapshot = workbook.save()
+      const name = workbookNameFromFilename(handle.name)
+      const { committed: created } = await commitThenWriteNativeFile(
+        handle,
+        () => createWorkbook(name, snapshot),
+        (record) => loadNativeDocument(record.id),
+      )
+      pendingExternalWriteRef.current = null
+      rememberBoundHandle(created.id, handle)
+      openingStatusRef.current = { workbookId: created.id, status: 'saved' }
+      setCurrentWorkbook(created)
+      setReloadToken((value) => value + 1)
+    } catch (error: unknown) {
+      if (error instanceof NativePersistenceError && error.committed) {
+        const created = error.committed as PersistedWorkbook
+        rememberBoundHandle(created.id, handle)
+        if (error.stage === 'external' && error.document) {
+          pendingExternalWriteRef.current = {
+            workbookId: created.id,
+            document: error.document,
+            generation: 0,
+          }
+        }
+        openingStatusRef.current = {
+          workbookId: created.id,
+          status: error.stage === 'external' ? 'external-failed' : 'sync-failed',
+          message: error.message,
+        }
+        setCurrentWorkbook(created)
+        setReloadToken((value) => value + 1)
+      } else {
+        setStatus('sync-failed')
+        setLoadMessage(error instanceof Error ? error.message : '另存新檔同步失敗。')
+      }
+    } finally {
+      savingRef.current = false
+    }
+  }, [rememberBoundHandle])
+
   const performNavigation = useCallback((action: 'home' | 'new', discard = false) => {
     setSafeSortSelection(null)
     setSafeSortError('')
@@ -339,6 +615,11 @@ function App() {
     else performNavigation(action)
   }, [isDirty, performNavigation])
 
+  const requestOpenLocal = useCallback(() => {
+    if (isDirty) setPendingNavigation('open-local')
+    else void openLocalFile()
+  }, [isDirty, openLocalFile])
+
   const confirmName = useCallback(async (name: string) => {
     if (!nameDialog) return
     setDocumentActionPending(true)
@@ -347,13 +628,6 @@ function App() {
     try {
       if (nameDialog.mode === 'new') {
         const snapshot = freshWorkbook(name)
-        const created = await createWorkbook(name, snapshot)
-        setNameDialog(null)
-        setStatus('loading')
-        setCurrentWorkbook(created)
-      } else if (nameDialog.mode === 'save-as') {
-        const snapshot = workbookRef.current?.save()
-        if (!snapshot) throw new Error('目前活頁簿尚未載入')
         const created = await createWorkbook(name, snapshot)
         setNameDialog(null)
         setStatus('loading')
@@ -368,6 +642,8 @@ function App() {
         if (currentWorkbookRef.current?.id === renamed.id) {
           revisionRef.current = renamed.revision
           setCurrentWorkbook((current) => current ? { ...current, name: renamed.name, revision: renamed.revision, updated_at: renamed.updated_at } : current)
+          setLoadMessage('Tiger 顯示名稱已更新；本機實體檔名不變。請儲存以同步檔案內容。')
+          setStatus('unsaved')
         }
         setNameDialog(null)
       }
@@ -385,6 +661,7 @@ function App() {
     setDocumentActionPending(true)
     try {
       await deleteWorkbook(deleteTarget.id)
+      await forgetNativeFileHandle(deleteTarget.id)
       setWorkbooks((items) => items.filter((item) => item.id !== deleteTarget.id))
       setDeleteTarget(null)
     } catch (error: unknown) {
@@ -402,7 +679,11 @@ function App() {
     setDocumentActionPending(false)
     if (saved) {
       setPendingNavigation(null)
-      performNavigation(action)
+      if (action === 'open-local') {
+        setLoadMessage('目前活頁簿已儲存。請再次按「開啟本機檔案」以顯示原生選擇器。')
+      } else {
+        performNavigation(action)
+      }
     }
   }, [pendingNavigation, performNavigation, save])
 
@@ -591,7 +872,9 @@ function App() {
           workbooks={workbooks}
           loading={homeLoading}
           error={homeError}
+          notice={loadMessage}
           onNew={() => setNameDialog({ mode: 'new' })}
+          onOpenLocal={() => void openLocalFile()}
           onOpen={openWorkbook}
           onRename={(target) => setNameDialog({ mode: 'rename', target })}
           onDelete={setDeleteTarget}
@@ -615,6 +898,12 @@ function App() {
           onConfirm={confirmDelete}
           onCancel={() => setDeleteTarget(null)}
         />}
+        {nativeCollision && <NativeCollisionDialog
+          filename={nativeCollision.handle.name}
+          pending={documentActionPending}
+          onCopy={openCollisionAsCopy}
+          onCancel={() => setNativeCollision(null)}
+        />}
       </>
     )
   }
@@ -625,11 +914,15 @@ function App() {
         <div className="document-identity">
           <h1>Tiger Web Sheets</h1>
           <strong data-testid="current-workbook-name">{currentWorkbook.name}</strong>
+          <span className="bound-file-name" data-testid="bound-file-name">
+            {boundFileName ? `本機檔案：${boundFileName}` : '本機檔案：尚未選擇'}
+          </span>
         </div>
         <div className="app-actions">
-          <button type="button" className="secondary-button compact-button" onClick={() => requestNavigation('home')}>活頁簿清單</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => requestNavigation('home')}>回到文件列表</button>
           <button type="button" className="secondary-button compact-button" onClick={() => requestNavigation('new')}>新增活頁簿</button>
-          <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'save-as' })}>另存新檔</button>
+          <button type="button" className="secondary-button compact-button" onClick={requestOpenLocal}>開啟本機檔案</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => void saveAs()} disabled={!canSave}>另存新檔</button>
           <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'rename', target: currentWorkbook })}>重新命名</button>
           {safeSortNotice && <span className="safe-sort-notice" role="status">{safeSortNotice}</span>}
           {filterNotice && <span className="filter-notice" role="status">{filterNotice}</span>}
@@ -764,9 +1057,9 @@ function App() {
       </section>
     </main>
     {nameDialog && <NameDialog key={nameDialog.mode}
-      title={nameDialog.mode === 'save-as' ? '另存新檔' : nameDialog.mode === 'new' ? '新增活頁簿' : '重新命名活頁簿'}
-      initialName={nameDialog.mode === 'save-as' ? `${currentWorkbook.name}-副本` : nameDialog.mode === 'rename' ? currentWorkbook.name : '未命名活頁簿'}
-      confirmLabel={nameDialog.mode === 'save-as' ? '另存' : nameDialog.mode === 'new' ? '建立' : '重新命名'}
+      title={nameDialog.mode === 'new' ? '新增活頁簿' : '重新命名活頁簿'}
+      initialName={nameDialog.mode === 'rename' ? currentWorkbook.name : '未命名活頁簿'}
+      confirmLabel={nameDialog.mode === 'new' ? '建立' : '重新命名'}
       pending={documentActionPending}
       onConfirm={confirmName}
       onCancel={() => setNameDialog(null)}
@@ -777,9 +1070,19 @@ function App() {
       onDiscard={() => {
         const action = pendingNavigation
         setPendingNavigation(null)
-        performNavigation(action, true)
+        if (action === 'open-local') {
+          void openLocalFile()
+        } else {
+          performNavigation(action, true)
+        }
       }}
       onCancel={() => setPendingNavigation(null)}
+    />}
+    {nativeCollision && <NativeCollisionDialog
+      filename={nativeCollision.handle.name}
+      pending={documentActionPending}
+      onCopy={openCollisionAsCopy}
+      onCancel={() => setNativeCollision(null)}
     />}
     </>
   )

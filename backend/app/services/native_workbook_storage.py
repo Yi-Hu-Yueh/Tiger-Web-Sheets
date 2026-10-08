@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -59,15 +60,7 @@ class NativeWorkbookStorage:
         return candidate
 
     def encode(self, record: WorkbookRecord) -> bytes:
-        document = {
-            "format": FORMAT,
-            "format_version": FORMAT_VERSION,
-            "workbook_id": record.id,
-            "revision": record.revision,
-            "saved_at": record.updated_at.isoformat(),
-            "snapshot_sha256": self.snapshot_sha256(record.snapshot),
-            "snapshot": record.snapshot,
-        }
+        document = self.document(record)
         return (
             json.dumps(
                 document,
@@ -77,6 +70,53 @@ class NativeWorkbookStorage:
             )
             + "\n"
         ).encode("utf-8")
+
+    def document(self, record: WorkbookRecord) -> dict[str, Any]:
+        return {
+            "format": FORMAT,
+            "format_version": FORMAT_VERSION,
+            "workbook_id": record.id,
+            "revision": record.revision,
+            "saved_at": record.updated_at.isoformat(),
+            "snapshot_sha256": self.snapshot_sha256(record.snapshot),
+            "snapshot": record.snapshot,
+        }
+
+    def record_from_document(
+        self, document: dict[str, Any], name: str
+    ) -> WorkbookRecord:
+        if document.get("format") != FORMAT or document.get("format_version") != FORMAT_VERSION:
+            raise NativeWorkbookIntegrityError("native workbook format is unsupported")
+        workbook_id = document.get("workbook_id")
+        revision = document.get("revision")
+        saved_at = document.get("saved_at")
+        snapshot = document.get("snapshot")
+        if not isinstance(workbook_id, str):
+            raise NativeWorkbookIntegrityError("native workbook ID is invalid")
+        self.file_path(workbook_id)
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            raise NativeWorkbookIntegrityError("native workbook revision is invalid")
+        if not isinstance(saved_at, str):
+            raise NativeWorkbookIntegrityError("native workbook saved time is invalid")
+        try:
+            timestamp = datetime.fromisoformat(saved_at.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise NativeWorkbookIntegrityError("native workbook saved time is invalid") from error
+        if timestamp.tzinfo is None:
+            raise NativeWorkbookIntegrityError("native workbook saved time must include a timezone")
+        if not isinstance(snapshot, dict):
+            raise NativeWorkbookIntegrityError("native workbook snapshot is invalid")
+        expected_hash = self.snapshot_sha256(snapshot)
+        if document.get("snapshot_sha256") != expected_hash:
+            raise NativeWorkbookIntegrityError("native workbook snapshot hash is invalid")
+        return WorkbookRecord(
+            id=workbook_id,
+            name=name,
+            snapshot=snapshot,
+            revision=revision,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
 
     def write_record(self, record: WorkbookRecord) -> None:
         self._atomic_write(self.file_path(record.id), self.encode(record))
@@ -102,21 +142,22 @@ class NativeWorkbookStorage:
             raise NativeWorkbookIntegrityError("native workbook file is malformed") from error
         if not isinstance(document, dict):
             raise NativeWorkbookIntegrityError("native workbook file must contain an object")
-        if document.get("format") != FORMAT or document.get("format_version") != FORMAT_VERSION:
-            raise NativeWorkbookIntegrityError("native workbook format is unsupported")
-        if document.get("workbook_id") != record.id:
+        decoded = self.record_from_document(document, record.name)
+        if decoded.id != record.id:
             raise NativeWorkbookIntegrityError("native workbook ID does not match SQLite")
-        if document.get("revision") != record.revision:
+        if decoded.revision != record.revision:
             raise NativeWorkbookIntegrityError("native workbook revision does not match SQLite")
-        snapshot = document.get("snapshot")
-        if not isinstance(snapshot, dict):
-            raise NativeWorkbookIntegrityError("native workbook snapshot is invalid")
         expected_hash = self.snapshot_sha256(record.snapshot)
-        if document.get("snapshot_sha256") != expected_hash:
-            raise NativeWorkbookIntegrityError("native workbook snapshot hash is invalid")
-        if self.snapshot_sha256(snapshot) != expected_hash or snapshot != record.snapshot:
+        if decoded.snapshot != record.snapshot:
             raise NativeWorkbookIntegrityError("native workbook snapshot does not match SQLite")
         return NativeWorkbookStatus(True, record.revision, expected_hash, "ok")
+
+    def verified_document(self, record: WorkbookRecord) -> dict[str, Any]:
+        self.verify(record)
+        document = json.loads(self.file_path(record.id).read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise NativeWorkbookIntegrityError("native workbook file must contain an object")
+        return document
 
     def quarantine(self, workbook_id: str) -> Path | None:
         path = self.file_path(workbook_id)
