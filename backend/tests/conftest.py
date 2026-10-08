@@ -15,8 +15,13 @@ def database_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(database_path: Path):
-    with TestClient(create_app(database_path)) as test_client:
+def workbook_root(tmp_path: Path) -> Path:
+    return tmp_path / "workbooks"
+
+
+@pytest.fixture
+def client(database_path: Path, workbook_root: Path):
+    with TestClient(create_app(database_path, workbook_root)) as test_client:
         yield test_client
 
 

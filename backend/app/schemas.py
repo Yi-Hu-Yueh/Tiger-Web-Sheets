@@ -11,7 +11,15 @@ class HealthResponse(BaseModel):
     database: str
     runtime_mode: str
     database_path: str
+    workbook_root: str
     instance_nonce: str | None = None
+
+
+class WorkbookStorageStatusResponse(BaseModel):
+    disk_backed: bool
+    revision: int
+    snapshot_sha256: str
+    integrity: str
 
 
 class WorkbookWriteRequest(BaseModel):

@@ -14,8 +14,10 @@ from app.schemas import (
     WorkbookRenameRequest,
     WorkbookResponse,
     WorkbookSummary,
+    WorkbookStorageStatusResponse,
     WorkbookWriteRequest,
 )
+from app.services.native_workbook_storage import NativeWorkbookError
 from app.services.workbook_store import WorkbookConflictError, WorkbookStore
 
 CANONICAL_WORKBOOK_ID = "default"
@@ -42,16 +44,21 @@ def _summary(record: WorkbookRecord) -> WorkbookSummary:
     )
 
 
-def create_app(database_path: str | Path | None = None) -> FastAPI:
-    runtime_identity = resolve_runtime_identity(database_path)
+def create_app(
+    database_path: str | Path | None = None,
+    workbook_root: str | Path | None = None,
+) -> FastAPI:
+    runtime_identity = resolve_runtime_identity(database_path, workbook_root)
     resolved_database_path = runtime_identity.database_path
-    store = WorkbookStore(resolved_database_path)
+    resolved_workbook_root = runtime_identity.workbook_root
+    store = WorkbookStore(resolved_database_path, resolved_workbook_root)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         store.initialize()
         app.state.workbook_store = store
         app.state.database_path = resolved_database_path
+        app.state.workbook_root = resolved_workbook_root
         yield
 
     application = FastAPI(title="Tiger Web Sheets API", version="1.0.0", lifespan=lifespan)
@@ -74,6 +81,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             database="sqlite",
             runtime_mode=runtime_identity.mode,
             database_path=str(runtime_identity.database_path),
+            workbook_root=str(runtime_identity.workbook_root),
             instance_nonce=runtime_identity.instance_nonce,
         )
 
@@ -81,7 +89,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     def list_workbooks(request: Request) -> list[WorkbookSummary]:
         try:
             return [_summary(record) for record in request.app.state.workbook_store.list()]
-        except (sqlite3.Error, ValueError, TypeError) as error:
+        except (sqlite3.Error, NativeWorkbookError, ValueError, TypeError) as error:
             raise HTTPException(status_code=503, detail="database unavailable") from error
 
     @application.post(
@@ -92,7 +100,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     ) -> WorkbookResponse:
         try:
             record = request.app.state.workbook_store.create(payload.name, payload.snapshot)
-        except (sqlite3.Error, OSError, ValueError, TypeError) as error:
+        except (sqlite3.Error, OSError, NativeWorkbookError, ValueError, TypeError) as error:
             raise HTTPException(status_code=503, detail="create failed") from error
         return _response(record)
 
@@ -100,7 +108,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     def get_workbook(workbook_id: str, request: Request) -> WorkbookResponse:
         try:
             record = request.app.state.workbook_store.get(workbook_id)
-        except (sqlite3.Error, ValueError, TypeError) as error:
+        except (sqlite3.Error, NativeWorkbookError, ValueError, TypeError) as error:
             raise HTTPException(status_code=503, detail="database unavailable") from error
         if record is None:
             raise HTTPException(status_code=404, detail="workbook not found")
@@ -123,9 +131,29 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             )
         except WorkbookConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        except (sqlite3.Error, OSError, ValueError, TypeError) as error:
+        except (sqlite3.Error, OSError, NativeWorkbookError, ValueError, TypeError) as error:
             raise HTTPException(status_code=503, detail="save failed") from error
         return _response(record)
+
+    @application.get(
+        "/api/workbooks/{workbook_id}/storage",
+        response_model=WorkbookStorageStatusResponse,
+    )
+    def workbook_storage_status(
+        workbook_id: str, request: Request
+    ) -> WorkbookStorageStatusResponse:
+        try:
+            storage = request.app.state.workbook_store.storage_status(workbook_id)
+        except (sqlite3.Error, OSError, NativeWorkbookError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="native workbook integrity failure") from error
+        if storage is None or storage.revision is None or storage.snapshot_sha256 is None:
+            raise HTTPException(status_code=404, detail="workbook not found")
+        return WorkbookStorageStatusResponse(
+            disk_backed=storage.exists,
+            revision=storage.revision,
+            snapshot_sha256=storage.snapshot_sha256,
+            integrity=storage.integrity,
+        )
 
     @application.patch("/api/workbooks/{workbook_id}", response_model=WorkbookResponse)
     def rename_workbook(
@@ -137,7 +165,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             )
         except WorkbookConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        except (sqlite3.Error, OSError, ValueError, TypeError) as error:
+        except (sqlite3.Error, OSError, NativeWorkbookError, ValueError, TypeError) as error:
             raise HTTPException(status_code=503, detail="rename failed") from error
         if record is None:
             raise HTTPException(status_code=404, detail="workbook not found")
@@ -149,7 +177,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     def delete_workbook(workbook_id: str, request: Request) -> Response:
         try:
             deleted = request.app.state.workbook_store.delete(workbook_id)
-        except (sqlite3.Error, OSError) as error:
+        except (sqlite3.Error, OSError, NativeWorkbookError) as error:
             raise HTTPException(status_code=503, detail="delete failed") from error
         if not deleted:
             raise HTTPException(status_code=404, detail="workbook not found")

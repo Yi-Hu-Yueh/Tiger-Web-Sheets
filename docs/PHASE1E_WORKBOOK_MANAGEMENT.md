@@ -1,6 +1,6 @@
 # Phase 1E workbook and document management
 
-Tiger Web Sheets manages multiple local documents stored as complete Univer snapshot JSON records in SQLite. A workbook is a Tiger-Web-Sheets document, not an Excel file.
+Tiger Web Sheets manages multiple local documents stored as complete Univer snapshot JSON records in SQLite and mirrored into verified `.tws.json` files. A workbook is a Tiger-Web-Sheets document, not an Excel file.
 
 ## Workflow
 
@@ -10,7 +10,7 @@ The home screen lists committed workbooks in `updated_at` descending order. Each
 
 Opening a card fetches that exact ID, destroys any prior Univer instance, deep-clones the committed snapshot, and creates a new Univer workbook. The clone matters because Univer owns and mutates its input; the API response must remain an immutable discard baseline.
 
-Manual **儲存** sends the current ID, current complete snapshot, display name, and expected revision. The UI reports **已儲存** only after SQLite commits and returns the incremented revision. HTTP 409 produces **儲存衝突** without overwriting the newer record.
+Manual **儲存** sends the current ID, current complete snapshot, display name, and expected revision. The UI reports **已儲存** only after SQLite and the native mirror represent the same verified committed revision. HTTP 409 produces **儲存衝突** without overwriting the newer record.
 
 **另存新檔** captures the current complete Univer snapshot and POSTs a separate document. The backend generates a new UUID, the original is not modified, and the new record becomes current. Subsequent saves address only the new ID.
 
@@ -58,4 +58,4 @@ The production/manual database was not used by any automated write.
 
 ## Boundaries
 
-Phase 1E does not implement autosave, CSV, XLSX, OS file pickers, drag/drop, cloud sync, authentication, collaboration, version history, or Trash. The SQLite snapshot is an internal Tiger-Web-Sheets format; no OS or Excel file compatibility is claimed.
+Phase 1E does not implement autosave, CSV, XLSX, OS file pickers, drag/drop, cloud sync, authentication, collaboration, version history, or Trash. SQLite snapshots and `.tws.json` mirrors are internal Tiger-Web-Sheets formats; no Excel compatibility is claimed.

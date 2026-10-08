@@ -7,11 +7,12 @@ Tiger Web Sheets Phase 1E is a persistent local workbook manager and browser spr
 - Frontend: React 19.3.0, TypeScript 6.0.3, Vite 8.3.3
 - Spreadsheet: `@univerjs/presets`, `@univerjs/preset-sheets-core`, `@univerjs/preset-sheets-sort`, `@univerjs/preset-sheets-filter`, and `@univerjs/preset-sheets-find-replace` 1.0.3
 - Backend: FastAPI 0.128.2 on Python 3.11.3
-- Storage: Python `sqlite3`, multiple workbooks with stable UUID identities; an existing `default` record remains supported
+- Storage: SQLite plus an atomic native `.tws.json` mirror for every committed workbook
 - Stored format: complete Tiger-Web-Sheets/Univer workbook snapshot JSON, not an XLSX file
 - Frontend URL: <http://127.0.0.1:5173/>
 - Backend health URL: <http://127.0.0.1:18085/api/health>
 - SQLite file: `data\tiger_web_sheets.db`
+- Native workbook directory: `workbooks\`
 
 Port 18083 was already occupied during implementation, so this project uses backend port 18085. Vite proxies `/api` to that port.
 
@@ -43,7 +44,7 @@ scripts\start_frontend.cmd
 
 ## Isolated destructive runtime tests
 
-Automated browser or API tests that write workbook data must use the fail-closed isolated launcher. The launcher requires explicit non-manual ports, an explicit database under `.cache`, and a per-run nonce. It refuses `data\tiger_web_sheets.db`, refuses the normal ports `18085` and `5173`, fails if either requested port is occupied, verifies the backend-reported database path and nonce, and only then starts the isolated frontend.
+Automated browser or API tests that write workbook data must use the fail-closed isolated launcher. The launcher requires explicit non-manual ports, an explicit database and workbook-file root under `.cache`, and a per-run nonce. It refuses `data\tiger_web_sheets.db` and the manual `workbooks` directory, refuses the normal ports `18085` and `5173`, fails if either requested port is occupied, verifies the backend-reported paths and nonce, and only then starts the isolated frontend.
 
 ```powershell
 $nonce = [guid]::NewGuid().ToString('N')
@@ -51,6 +52,7 @@ $nonce = [guid]::NewGuid().ToString('N')
   -BackendPort 18185 `
   -FrontendPort 5185 `
   -DatabasePath ".cache\isolated-runtimes\$nonce\workbook.db" `
+  -WorkbookRoot ".cache\isolated-runtimes\$nonce\workbooks" `
   -InstanceNonce $nonce
 ```
 
@@ -76,8 +78,8 @@ Dependencies are locked. To restore them:
 
 - `未儲存`: the fallback workbook has never been saved, or the workbook changed after its last committed save
 - `儲存中`: a snapshot is being sent to FastAPI
-- `已儲存`: SQLite committed the snapshot and returned the new revision
-- `儲存失敗`: the API/database did not confirm a committed save; local edits remain available for retry
+- `已儲存`: SQLite and the verified native `.tws.json` mirror both represent the committed snapshot/revision
+- `儲存失敗`: the API could not complete both durable stores; local edits remain available for retry
 - `儲存衝突`: the browser revision is stale; the application does not overwrite the newer stored snapshot
 
 On startup, the application shows the workbook list. Opening a document loads that exact record and revision. If the backend is unavailable, the app shows a backend error instead of claiming that data is saved.
@@ -94,7 +96,15 @@ On startup, the application shows the workbook list. Opening a document loads th
 
 Workbook names may repeat. The list shows modified time and a short stable document identifier so records remain distinguishable. Records are ordered by most recently updated first.
 
-The stored format is a complete Tiger-Web-Sheets/Univer snapshot inside SQLite. These records are not `.xlsx` files and Phase 1E does not provide OS file-picker, CSV, or XLSX workflows. Detailed behavior and validation are in [docs/PHASE1E_WORKBOOK_MANAGEMENT.md](docs/PHASE1E_WORKBOOK_MANAGEMENT.md).
+The stored format is a complete Tiger-Web-Sheets/Univer snapshot retained in SQLite and mirrored into the native disk file. These records are not `.xlsx` files and Phase 1E does not provide OS file-picker, CSV, or XLSX workflows. Detailed behavior and validation are in [docs/PHASE1E_WORKBOOK_MANAGEMENT.md](docs/PHASE1E_WORKBOOK_MANAGEMENT.md).
+
+## Phase 1E-R1 native disk storage
+
+Every committed workbook also has a native file at `workbooks\<workbook-id>.tws.json`. The backend constructs this path from a validated stable workbook ID; display names never become filenames. Each UTF-8 file identifies the Tiger-Web-Sheets format and version, workbook ID, revision, saved time, SHA-256 snapshot hash, and complete Univer snapshot.
+
+SQLite remains the transactional source of truth for identity, name, revision, timestamps, and optimistic concurrency. The native file is a verified durable mirror. Writes use a same-directory temporary file, file flush/fsync, and `os.replace`; SQLite is committed only after the new mirror verifies. A database failure restores the previous native bytes. A missing legacy mirror is recreated idempotently from committed SQLite, while an existing malformed or mismatched file is reported rather than silently overwritten.
+
+Save As creates another ID and another native file. Rename keeps the same physical filename. Delete first quarantines the target mirror, commits the SQLite deletion, and then removes the quarantine; unrelated workbook files are untouched. See [docs/PHASE1E_DISK_STORAGE.md](docs/PHASE1E_DISK_STORAGE.md) for the protocol and recovery boundaries.
 
 ## Phase 1B spreadsheet operations
 
@@ -146,6 +156,7 @@ Detailed evidence, exact sort orders, filter persistence semantics, the formula-
 - `PUT /api/workbooks/{workbook_id}`
 - `PATCH /api/workbooks/{workbook_id}`
 - `DELETE /api/workbooks/{workbook_id}`
+- `GET /api/workbooks/{workbook_id}/storage`
 
 POST creates a collision-resistant UUID record and never overwrites an existing document. PUT contains the complete Univer snapshot and `expected_revision`; PATCH renames metadata without changing snapshot contents or identity. Committed saves and renames increment that workbook's revision. A stale expected revision returns HTTP 409. Existing `default` records are listed and opened normally and remain compatible with the legacy first-save PUT path.
 
@@ -169,14 +180,13 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 
 ## Current limitations
 
-- Autosave is not implemented.
 - Autosave remains intentionally unsupported; manual Save is authoritative.
 - Single-column sorting of a multi-column record set is unsupported; the normal-looking Univer quick-sort actions are not exposed. Use the documented **安全排序** workflow.
 - Self-row-derived formula columns must remain outside the tested sort rectangle; Univer 1.0.3 does not rewrite those moved formula references in the diagnostic included-column path.
 - Generic TSV paste can auto-convert leading-zero values before sorting; this owner-observed issue remains for a dedicated repair. The sort fixture stores phone numbers as strings and verifies that sorting itself preserves them.
 - CSV import/export is not implemented.
 - XLSX import/export is not implemented.
-- The stored file is Univer snapshot JSON in SQLite, not an XLSX workbook.
+- Stored documents are Univer snapshot JSON in SQLite plus `.tws.json` mirrors, not XLSX workbooks.
 - Conditional formatting, data validation, charts, pivot tables, printing, PDF export, and version history are not implemented.
 - Authentication, collaboration, AI, and cloud deployment are not implemented.
 - Excel compatibility is not claimed beyond the behavior explicitly tested with Univer 1.0.3.

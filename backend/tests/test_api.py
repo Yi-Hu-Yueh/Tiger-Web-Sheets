@@ -32,21 +32,23 @@ def test_health_endpoint(client: TestClient) -> None:
         "database": "sqlite",
         "runtime_mode": "manual",
         "database_path": str(client.app.state.database_path),
+        "workbook_root": str(client.app.state.workbook_root),
         "instance_nonce": None,
     }
 
 
 def test_isolated_runtime_health_exposes_verified_identity(
-    monkeypatch, database_path: Path
+    monkeypatch, database_path: Path, workbook_root: Path
 ) -> None:
     monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
     monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
-    with TestClient(create_app(database_path)) as isolated_client:
+    with TestClient(create_app(database_path, workbook_root)) as isolated_client:
         assert isolated_client.get("/api/health").json() == {
             "status": "ok",
             "database": "sqlite",
             "runtime_mode": "isolated-test",
             "database_path": str(database_path.resolve()),
+            "workbook_root": str(workbook_root.resolve()),
             "instance_nonce": "test-nonce",
         }
 
@@ -68,11 +70,57 @@ def test_isolated_runtime_refuses_production_database(monkeypatch) -> None:
         create_app(DEFAULT_DATABASE_PATH)
 
 
-def test_isolated_runtime_requires_nonce(monkeypatch, database_path: Path) -> None:
+def test_isolated_runtime_requires_environment_database_under_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from app.database import ISOLATED_ROOT
+
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_DB", str(tmp_path / "outside.sqlite"))
+    monkeypatch.setenv(
+        "TIGER_WEB_SHEETS_WORKBOOK_ROOT",
+        str(ISOLATED_ROOT / "test-runtime-identity" / "workbooks"),
+    )
+    with pytest.raises(RuntimeError, match="database must be located under"):
+        create_app()
+
+
+def test_isolated_runtime_requires_explicit_workbook_root(
+    monkeypatch, database_path: Path
+) -> None:
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
+    monkeypatch.delenv("TIGER_WEB_SHEETS_WORKBOOK_ROOT", raising=False)
+    with pytest.raises(RuntimeError, match="explicit TIGER_WEB_SHEETS_WORKBOOK_ROOT"):
+        create_app(database_path)
+
+
+def test_isolated_runtime_requires_environment_workbook_root_under_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from app.database import ISOLATED_ROOT
+
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
+    monkeypatch.setenv(
+        "TIGER_WEB_SHEETS_DB",
+        str(ISOLATED_ROOT / "test-runtime-identity" / "workbook.db"),
+    )
+    monkeypatch.setenv(
+        "TIGER_WEB_SHEETS_WORKBOOK_ROOT", str(tmp_path / "outside-workbooks")
+    )
+    with pytest.raises(RuntimeError, match="workbook root must be located under"):
+        create_app()
+
+
+def test_isolated_runtime_requires_nonce(
+    monkeypatch, database_path: Path, workbook_root: Path
+) -> None:
     monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
     monkeypatch.delenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", raising=False)
     with pytest.raises(RuntimeError, match="requires TIGER_WEB_SHEETS_INSTANCE_NONCE"):
-        create_app(database_path)
+        create_app(database_path, workbook_root)
 
 
 def test_first_save_creates_and_loads_workbook(client: TestClient, workbook_snapshot: dict) -> None:
@@ -107,14 +155,14 @@ def test_revision_increments_and_stale_revision_conflicts(
 
 
 def test_persistence_survives_new_connection_and_application_instance(
-    database_path: Path, workbook_snapshot: dict
+    database_path: Path, workbook_root: Path, workbook_snapshot: dict
 ) -> None:
-    with TestClient(create_app(database_path)) as first_client:
+    with TestClient(create_app(database_path, workbook_root)) as first_client:
         created = first_client.put(
             "/api/workbooks/default", json=save_payload(workbook_snapshot)
         )
         assert created.status_code == 200
-    with TestClient(create_app(database_path)) as restarted_client:
+    with TestClient(create_app(database_path, workbook_root)) as restarted_client:
         loaded = restarted_client.get("/api/workbooks/default")
         assert loaded.status_code == 200
         assert loaded.json()["revision"] == 1
@@ -122,9 +170,9 @@ def test_persistence_survives_new_connection_and_application_instance(
 
 
 def test_initialization_does_not_destroy_existing_data(
-    database_path: Path, workbook_snapshot: dict
+    database_path: Path, workbook_root: Path, workbook_snapshot: dict
 ) -> None:
-    store = WorkbookStore(database_path)
+    store = WorkbookStore(database_path, workbook_root)
     store.initialize()
     store.put("default", "Tiger Web Sheets", workbook_snapshot, expected_revision=0)
     store.initialize()
@@ -344,7 +392,7 @@ def test_phase1d_data_operations_snapshot_round_trip(
 
 
 def test_phase1d_safe_sort_survives_backend_restart(
-    database_path: Path, phase1d_data_operations_snapshot: dict
+    database_path: Path, workbook_root: Path, phase1d_data_operations_snapshot: dict
 ) -> None:
     sorted_snapshot = deepcopy(phase1d_data_operations_snapshot)
     rows = sorted_snapshot["sheets"]["data-operations"]["cellData"]
@@ -365,7 +413,7 @@ def test_phase1d_safe_sort_survives_backend_restart(
         for column in range(5):
             rows[str(destination_row)][str(column)] = source[str(column)]
 
-    with TestClient(create_app(database_path)) as first_runtime:
+    with TestClient(create_app(database_path, workbook_root)) as first_runtime:
         saved = first_runtime.put(
             "/api/workbooks/default",
             json=save_payload(sorted_snapshot),
@@ -373,7 +421,7 @@ def test_phase1d_safe_sort_survives_backend_restart(
         assert saved.status_code == 200
         assert saved.json()["revision"] == 1
 
-    with TestClient(create_app(database_path)) as restarted_runtime:
+    with TestClient(create_app(database_path, workbook_root)) as restarted_runtime:
         loaded = restarted_runtime.get("/api/workbooks/default")
         assert loaded.status_code == 200
         persisted_rows = loaded.json()["snapshot"]["sheets"]["data-operations"][
@@ -513,16 +561,16 @@ def test_delete_removes_only_selected_workbook(
 
 
 def test_multi_workbook_list_survives_backend_restart(
-    database_path: Path, workbook_snapshot: dict
+    database_path: Path, workbook_root: Path, workbook_snapshot: dict
 ) -> None:
-    with TestClient(create_app(database_path)) as first_runtime:
+    with TestClient(create_app(database_path, workbook_root)) as first_runtime:
         created = [
             first_runtime.post(
                 "/api/workbooks", json=create_payload(name, workbook_snapshot)
             ).json()
             for name in ["文件一", "文件二"]
         ]
-    with TestClient(create_app(database_path)) as restarted_runtime:
+    with TestClient(create_app(database_path, workbook_root)) as restarted_runtime:
         listed = restarted_runtime.get("/api/workbooks").json()
         assert {item["id"] for item in listed} == {item["id"] for item in created}
         assert all(restarted_runtime.get(f"/api/workbooks/{item['id']}").status_code == 200 for item in created)

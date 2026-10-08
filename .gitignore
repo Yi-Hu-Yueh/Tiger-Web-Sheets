@@ -9,4 +9,7 @@ backend/.venv/
 data/*.db
 data/*.db-*
 *.log
+workbooks/*.tws.json
+workbooks/*.tmp
+workbooks/*.bak
 

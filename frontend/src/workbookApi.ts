@@ -17,6 +17,7 @@ type RuntimeHealth = {
   database: string
   runtime_mode: string
   database_path: string
+  workbook_root: string
   instance_nonce: string | null
 }
 
@@ -34,7 +35,8 @@ export async function verifyRuntimeIdentity(signal?: AbortSignal): Promise<void>
   const expectedMode = import.meta.env.VITE_TIGER_RUNTIME_MODE
   const expectedDatabasePath = import.meta.env.VITE_TIGER_DATABASE_PATH
   const expectedNonce = import.meta.env.VITE_TIGER_INSTANCE_NONCE
-  const configured = [expectedMode, expectedDatabasePath, expectedNonce]
+  const expectedWorkbookRoot = import.meta.env.VITE_TIGER_WORKBOOK_ROOT
+  const configured = [expectedMode, expectedDatabasePath, expectedWorkbookRoot, expectedNonce]
 
   if (configured.every((value) => !value)) return
   if (configured.some((value) => !value)) {
@@ -48,7 +50,8 @@ export async function verifyRuntimeIdentity(signal?: AbortSignal): Promise<void>
     health.status !== 'ok' ||
     health.runtime_mode !== expectedMode ||
     health.instance_nonce !== expectedNonce ||
-    normalizeRuntimePath(health.database_path) !== normalizeRuntimePath(expectedDatabasePath)
+    normalizeRuntimePath(health.database_path) !== normalizeRuntimePath(expectedDatabasePath) ||
+    normalizeRuntimePath(health.workbook_root) !== normalizeRuntimePath(expectedWorkbookRoot)
   ) {
     throw new ApiError('後端隔離環境識別不符，已拒絕存取', 503)
   }

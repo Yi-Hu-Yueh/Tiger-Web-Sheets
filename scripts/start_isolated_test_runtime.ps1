@@ -13,6 +13,10 @@ param(
     [string] $DatabasePath,
 
     [Parameter(Mandatory)]
+    [ValidateNotNullOrEmpty()]
+    [string] $WorkbookRoot,
+
+    [Parameter(Mandatory)]
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
     [string] $InstanceNonce
 )
@@ -28,11 +32,19 @@ $viteScript = Join-Path $frontendDirectory 'node_modules\vite\bin\vite.js'
 $canonicalDatabase = [System.IO.Path]::GetFullPath(
     (Join-Path $projectRoot 'data\tiger_web_sheets.db')
 )
+$canonicalWorkbookRoot = [System.IO.Path]::GetFullPath(
+    (Join-Path $projectRoot 'workbooks')
+)
 $isolatedRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot '.cache'))
 $resolvedDatabase = if ([System.IO.Path]::IsPathRooted($DatabasePath)) {
     [System.IO.Path]::GetFullPath($DatabasePath)
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $projectRoot $DatabasePath))
+}
+$resolvedWorkbookRoot = if ([System.IO.Path]::IsPathRooted($WorkbookRoot)) {
+    [System.IO.Path]::GetFullPath($WorkbookRoot)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $projectRoot $WorkbookRoot))
 }
 
 if ($BackendPort -in @(18085, 5173) -or $FrontendPort -in @(18085, 5173)) {
@@ -44,12 +56,24 @@ if ($BackendPort -eq $FrontendPort) {
 if ($resolvedDatabase.Equals($canonicalDatabase, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'Isolated tests refuse data\tiger_web_sheets.db.'
 }
+if ($resolvedWorkbookRoot.Equals(
+    $canonicalWorkbookRoot,
+    [System.StringComparison]::OrdinalIgnoreCase
+)) {
+    throw 'Isolated tests refuse the manual workbooks directory.'
+}
 $isolatedPrefix = $isolatedRoot.TrimEnd('\') + '\'
 if (-not $resolvedDatabase.StartsWith(
     $isolatedPrefix,
     [System.StringComparison]::OrdinalIgnoreCase
 )) {
     throw 'The isolated test database must be located under the project .cache directory.'
+}
+if (-not $resolvedWorkbookRoot.StartsWith(
+    $isolatedPrefix,
+    [System.StringComparison]::OrdinalIgnoreCase
+)) {
+    throw 'The isolated workbook root must be located under the project .cache directory.'
 }
 if (-not (Test-Path -LiteralPath $pythonExecutable -PathType Leaf)) {
     throw "Python was not found at $pythonExecutable"
@@ -82,6 +106,7 @@ $runtimeDirectory = Join-Path $projectRoot ".cache\isolated-runtimes\$InstanceNo
 $databaseDirectory = Split-Path -Parent $resolvedDatabase
 New-Item -ItemType Directory -Path $runtimeDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $databaseDirectory -Force | Out-Null
+New-Item -ItemType Directory -Path $resolvedWorkbookRoot -Force | Out-Null
 
 $backendOut = Join-Path $runtimeDirectory 'backend.out.log'
 $backendErr = Join-Path $runtimeDirectory 'backend.err.log'
@@ -106,6 +131,7 @@ try {
         Environment = @{
             TIGER_WEB_SHEETS_DB = $resolvedDatabase
             TIGER_WEB_SHEETS_RUNTIME = 'isolated-test'
+            TIGER_WEB_SHEETS_WORKBOOK_ROOT = $resolvedWorkbookRoot
             TIGER_WEB_SHEETS_INSTANCE_NONCE = $InstanceNonce
         }
         PassThru = $true
@@ -134,9 +160,13 @@ try {
         -not $health.database_path.Equals(
             $resolvedDatabase,
             [System.StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not $health.workbook_root.Equals(
+            $resolvedWorkbookRoot,
+            [System.StringComparison]::OrdinalIgnoreCase
         )
     ) {
-        throw 'The isolated backend identity did not match the requested database and nonce.'
+        throw 'The isolated backend identity did not match the requested database, workbook root, and nonce.'
     }
 
     $frontendStartParameters = @{
@@ -153,6 +183,7 @@ try {
             TIGER_WEB_SHEETS_API_TARGET = $backendUrl
             VITE_TIGER_RUNTIME_MODE = 'isolated-test'
             VITE_TIGER_DATABASE_PATH = $resolvedDatabase
+            VITE_TIGER_WORKBOOK_ROOT = $resolvedWorkbookRoot
             VITE_TIGER_INSTANCE_NONCE = $InstanceNonce
         }
         PassThru = $true
@@ -182,6 +213,7 @@ try {
         runtime_mode = 'isolated-test'
         instance_nonce = $InstanceNonce
         database_path = $resolvedDatabase
+        workbook_root = $resolvedWorkbookRoot
         backend_port = $BackendPort
         backend_pid = $backendProcess.Id
         backend_url = $backendUrl
