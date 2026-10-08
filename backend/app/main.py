@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, status
 
-from app.database import connect, resolve_database_path
+from app.database import connect, resolve_runtime_identity
 from app.models import WorkbookRecord
 from app.schemas import HealthResponse, WorkbookResponse, WorkbookWriteRequest
 from app.services.workbook_store import WorkbookConflictError, WorkbookStore
@@ -25,7 +25,8 @@ def _response(record: WorkbookRecord) -> WorkbookResponse:
 
 
 def create_app(database_path: str | Path | None = None) -> FastAPI:
-    resolved_database_path = resolve_database_path(database_path)
+    runtime_identity = resolve_runtime_identity(database_path)
+    resolved_database_path = runtime_identity.database_path
     store = WorkbookStore(resolved_database_path)
 
     @asynccontextmanager
@@ -50,7 +51,13 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="database unavailable",
             ) from error
-        return HealthResponse(status="ok", database="sqlite")
+        return HealthResponse(
+            status="ok",
+            database="sqlite",
+            runtime_mode=runtime_identity.mode,
+            database_path=str(runtime_identity.database_path),
+            instance_nonce=runtime_identity.instance_nonce,
+        )
 
     @application.get("/api/workbooks/{workbook_id}", response_model=WorkbookResponse)
     def get_workbook(workbook_id: str, request: Request) -> WorkbookResponse:

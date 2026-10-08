@@ -51,10 +51,30 @@ button {
   letter-spacing: 0.01em;
 }
 
+.app-actions,
 .save-controls {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.safe-sort-notice,
+.filter-notice,
+.filter-error {
+  max-width: min(42vw, 520px);
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.safe-sort-notice,
+.filter-notice {
+  color: #287448;
+}
+
+.filter-error {
+  color: #b42318;
 }
 
 .save-status {
@@ -75,6 +95,8 @@ button {
 }
 
 .save-controls button,
+.filter-button,
+.safe-sort-button,
 .state-panel button {
   border: 1px solid #176b3a;
   border-radius: 7px;
@@ -85,11 +107,15 @@ button {
 }
 
 .save-controls button:hover:not(:disabled),
+.filter-button:hover:not(:disabled),
+.safe-sort-button:hover:not(:disabled),
 .state-panel button:hover {
   background: #10562e;
 }
 
-.save-controls button:disabled {
+.save-controls button:disabled,
+.filter-button:disabled,
+.safe-sort-button:disabled {
   border-color: #b9c4bd;
   background: #b9c4bd;
   cursor: not-allowed;
@@ -104,6 +130,130 @@ button {
 .univer-shell {
   width: 100%;
   height: 100%;
+}
+
+.safe-sort-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  /* Univer's ribbon header is z-index: 10; keep the external panel above it. */
+  z-index: 20;
+  width: min(360px, calc(100% - 32px));
+  padding: 18px;
+  border: 1px solid #ccd9d0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 36px rgb(23 47 33 / 20%);
+}
+
+.safe-sort-panel__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.safe-sort-panel__heading div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.safe-sort-panel__heading strong {
+  color: #153f2c;
+  font-size: 16px;
+}
+
+.safe-sort-panel__heading span {
+  overflow: hidden;
+  color: #58635d;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.safe-sort-close {
+  border: 0;
+  padding: 0 3px;
+  color: #58635d;
+  background: transparent;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.safe-sort-help,
+.safe-sort-error {
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.safe-sort-help {
+  color: #405148;
+}
+
+.safe-sort-error {
+  color: #b42318;
+}
+
+.safe-sort-panel > label:not(.safe-sort-checkbox) {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: #35433b;
+  font-size: 14px;
+}
+
+.safe-sort-panel select {
+  min-width: 0;
+  border: 1px solid #b9c8be;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: #17211b;
+  background: #ffffff;
+}
+
+.safe-sort-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  color: #35433b;
+  font-size: 14px;
+}
+
+.safe-sort-panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.safe-sort-panel__actions button {
+  border-radius: 7px;
+  padding: 7px 13px;
+  cursor: pointer;
+}
+
+.safe-sort-cancel {
+  border: 1px solid #b9c8be;
+  color: #35433b;
+  background: #ffffff;
+}
+
+.safe-sort-apply {
+  border: 1px solid #176b3a;
+  color: #ffffff;
+  background: #176b3a;
+}
+
+.safe-sort-panel__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .state-panel {

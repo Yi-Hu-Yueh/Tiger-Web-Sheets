@@ -7,11 +7,16 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "validate:phase1d": "node scripts/phase1d-runtime-check.mjs",
+    "validate:phase1d-safe-sort": "node scripts/phase1d-safe-sort-check.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "@univerjs/core": "1.0.3",
     "@univerjs/preset-sheets-core": "1.0.3",
+    "@univerjs/preset-sheets-filter": "1.0.3",
+    "@univerjs/preset-sheets-find-replace": "1.0.3",
+    "@univerjs/preset-sheets-sort": "1.0.3",
     "@univerjs/presets": "1.0.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -32,4 +37,3 @@
     "vite": "8.3.3"
   }
 }
-

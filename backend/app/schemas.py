@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class HealthResponse(BaseModel):
     status: str
     database: str
+    runtime_mode: str
+    database_path: str
+    instance_nonce: str | None = None
 
 
 class WorkbookWriteRequest(BaseModel):

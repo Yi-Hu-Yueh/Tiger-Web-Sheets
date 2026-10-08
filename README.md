@@ -1,11 +1,11 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets Phase 1C is a persistent browser spreadsheet vertical slice. It connects an editable open-source Univer workbook to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics, while using Univer's native open-source spreadsheet operations, formatting UI, and formula engine.
+Tiger Web Sheets Phase 1D is a persistent browser spreadsheet vertical slice. It connects an editable open-source Univer workbook to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics, while using Univer's native open-source spreadsheet operations, formatting, formulas, sort model, filter, find, and replace UI.
 
 ## Architecture
 
 - Frontend: React 19.3.0, TypeScript 6.0.3, Vite 8.3.3
-- Spreadsheet: `@univerjs/presets` and `@univerjs/preset-sheets-core` 1.0.3
+- Spreadsheet: `@univerjs/presets`, `@univerjs/preset-sheets-core`, `@univerjs/preset-sheets-sort`, `@univerjs/preset-sheets-filter`, and `@univerjs/preset-sheets-find-replace` 1.0.3
 - Backend: FastAPI 0.128.2 on Python 3.11.3
 - Storage: Python `sqlite3`, one canonical workbook with ID `default`
 - Stored format: complete Tiger-Web-Sheets/Univer workbook snapshot JSON, not an XLSX file
@@ -40,6 +40,21 @@ To start services individually:
 scripts\start_backend.cmd
 scripts\start_frontend.cmd
 ```
+
+## Isolated destructive runtime tests
+
+Automated browser or API tests that write workbook data must use the fail-closed isolated launcher. The launcher requires explicit non-manual ports, an explicit database under `.cache`, and a per-run nonce. It refuses `data\tiger_web_sheets.db`, refuses the normal ports `18085` and `5173`, fails if either requested port is occupied, verifies the backend-reported database path and nonce, and only then starts the isolated frontend.
+
+```powershell
+$nonce = [guid]::NewGuid().ToString('N')
+.\scripts\start_isolated_test_runtime.ps1 `
+  -BackendPort 18185 `
+  -FrontendPort 5185 `
+  -DatabasePath ".cache\isolated-runtimes\$nonce\workbook.db" `
+  -InstanceNonce $nonce
+```
+
+The isolated frontend rechecks `/api/health` before workbook access and before every save. Headless Phase 1D API persistence additionally requires `PHASE1D_EXPECTED_DB_PATH` and `PHASE1D_INSTANCE_NONCE`; it aborts before PUT when runtime identity does not match.
 
 The existing PowerShell frontend helper also remains available:
 
@@ -96,6 +111,18 @@ The detailed compatibility evidence, exact observed formula strings, limitations
 
 Structural insert/delete reference rewriting remains a documented partial edge case, and ordinary desktop copy-reference adjustment remains an owner runtime checkpoint. These limitations do not replace the verified formula results with compatibility claims that were not observed.
 
+## Phase 1D data operations
+
+The official Apache-2.0 Univer 1.0.3 packages provide the native Sort model plus Filter, Find, and Replace UI. Tiger Web Sheets does not add a second spreadsheet engine or application-owned sort/filter/search model.
+
+The supported workflow is to select the complete record rectangle including its header, select the application-level **安全排序** control, choose a key column and direction, and keep the required header option checked. The control sends that exact rectangle to Univer's native sort command with `hasTitle: true`, so all ordinary data columns move as complete records while the header stays fixed. Univer's ambiguous quick-sort UI is not registered. In the tested fixture, records are `A1:E5`; the same-row formula column `F` remains outside the sort rectangle and recalculates from the sorted amount column. Safe Sort rejects selected rectangles containing formulas. The panel's X and Cancel controls share the same non-mutating close path.
+
+To create a filter, select a header-bearing table and use the application-level **啟用篩選** control. It calls Univer's native `sheet.command.set-filter-range`; Univer then supplies the header dropdowns, criteria UI, row visibility, undo stack, and persisted `SHEET_FILTER_PLUGIN` resource. Find navigation remains non-dirty. Native Replace commands are explicitly recognized as persisted changes without treating formula-engine recalculation as a user edit.
+
+Final Phase 1D capability status is **PASS** for Safe Sort, Safe Sort X close, Filter, Find, and Replace. The owner completed and accepted the required desktop runtime checkpoints.
+
+Detailed evidence, exact sort orders, filter persistence semantics, the formula-column limitation, isolated database location, and the owner test context are in [docs/PHASE1D_DATA_OPERATIONS.md](docs/PHASE1D_DATA_OPERATIONS.md). The reusable fixture is [backend/tests/fixtures/phase1d_data_operations.json](backend/tests/fixtures/phase1d_data_operations.json). `npm run validate:phase1d` runs the native headless sort/filter checks, and `npm run validate:phase1d-safe-sort` runs the focused whole-record R1 regression.
+
 ## API
 
 - `GET /api/health`
@@ -122,12 +149,14 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 ..\.tools\node-v24.19.0-win-x64\npm.cmd run build
 ```
 
-## Phase 1B limitations
+## Current limitations
 
 - Autosave is not implemented.
 - A workbook/document manager is not implemented.
 - Save As and document rename workflows are not implemented.
-- Sort, filter, find, and replace are not implemented in this phase.
+- Single-column sorting of a multi-column record set is unsupported; the normal-looking Univer quick-sort actions are not exposed. Use the documented **安全排序** workflow.
+- Self-row-derived formula columns must remain outside the tested sort rectangle; Univer 1.0.3 does not rewrite those moved formula references in the diagnostic included-column path.
+- Generic TSV paste can auto-convert leading-zero values before sorting; this owner-observed issue remains for a dedicated repair. The sort fixture stores phone numbers as strings and verifies that sorting itself preserves them.
 - CSV import/export is not implemented.
 - XLSX import/export is not implemented.
 - The stored file is Univer snapshot JSON in SQLite, not an XLSX workbook.

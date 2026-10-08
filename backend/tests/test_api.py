@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -20,7 +22,52 @@ def save_payload(snapshot: dict, expected_revision: int = 0) -> dict:
 def test_health_endpoint(client: TestClient) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "database": "sqlite"}
+    assert response.json() == {
+        "status": "ok",
+        "database": "sqlite",
+        "runtime_mode": "manual",
+        "database_path": str(client.app.state.database_path),
+        "instance_nonce": None,
+    }
+
+
+def test_isolated_runtime_health_exposes_verified_identity(
+    monkeypatch, database_path: Path
+) -> None:
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
+    with TestClient(create_app(database_path)) as isolated_client:
+        assert isolated_client.get("/api/health").json() == {
+            "status": "ok",
+            "database": "sqlite",
+            "runtime_mode": "isolated-test",
+            "database_path": str(database_path.resolve()),
+            "instance_nonce": "test-nonce",
+        }
+
+
+def test_isolated_runtime_refuses_default_database(monkeypatch) -> None:
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
+    monkeypatch.delenv("TIGER_WEB_SHEETS_DB", raising=False)
+    with pytest.raises(RuntimeError, match="explicit TIGER_WEB_SHEETS_DB"):
+        create_app()
+
+
+def test_isolated_runtime_refuses_production_database(monkeypatch) -> None:
+    from app.database import DEFAULT_DATABASE_PATH
+
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
+    with pytest.raises(RuntimeError, match="refuses the production/manual database"):
+        create_app(DEFAULT_DATABASE_PATH)
+
+
+def test_isolated_runtime_requires_nonce(monkeypatch, database_path: Path) -> None:
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.delenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", raising=False)
+    with pytest.raises(RuntimeError, match="requires TIGER_WEB_SHEETS_INSTANCE_NONCE"):
+        create_app(database_path)
 
 
 def test_first_save_creates_and_loads_workbook(client: TestClient, workbook_snapshot: dict) -> None:
@@ -239,3 +286,106 @@ def test_phase1c_formula_snapshot_round_trip(
         "v": 30,
         "t": 2,
     }
+
+
+def test_phase1d_data_operations_snapshot_round_trip(
+    client: TestClient, phase1d_data_operations_snapshot: dict
+) -> None:
+    saved = client.put(
+        "/api/workbooks/default",
+        json=save_payload(phase1d_data_operations_snapshot),
+    )
+    assert saved.status_code == 200
+
+    loaded = client.get("/api/workbooks/default")
+    assert loaded.status_code == 200
+    snapshot = loaded.json()["snapshot"]
+    assert snapshot == phase1d_data_operations_snapshot
+
+    rows = snapshot["sheets"]["data-operations"]["cellData"]
+    expected_records = {
+        "R001": ("李小華", "0922222222", 100, "台北", "=D3*0.95", 95),
+        "R002": ("林小美", "0944444444", 200, "高雄", "=D5*0.95", 190),
+        "R003": ("王小明", "0911111111", 300, "台中", "=D2*0.95", 285),
+        "R004": ("陳大同", "0933333333", 400, "台中", "=D4*0.95", 380),
+    }
+    observed_records = {
+        row["0"]["v"]: (
+            row["1"]["v"],
+            row["2"]["v"],
+            row["3"]["v"],
+            row["4"]["v"],
+            row["5"]["f"],
+            row["5"]["v"],
+        )
+        for row_index, row in rows.items()
+        if row_index != "0"
+    }
+    assert observed_records == expected_records
+    assert all(record[1].startswith("0") for record in observed_records.values())
+    assert [rows[str(row)]["6"]["v"] for row in range(5)] == [
+        "OLD_VALUE",
+        "OLD_VALUE",
+        "KEEP_VALUE",
+        "UNRELATED",
+        "CONTROL",
+    ]
+    assert snapshot["sheets"]["regression-sheet"]["cellData"]["0"]["0"] == {
+        "v": "00123",
+        "t": 1,
+    }
+
+
+def test_phase1d_safe_sort_survives_backend_restart(
+    database_path: Path, phase1d_data_operations_snapshot: dict
+) -> None:
+    sorted_snapshot = deepcopy(phase1d_data_operations_snapshot)
+    rows = sorted_snapshot["sheets"]["data-operations"]["cellData"]
+    source_rows = {
+        row["0"]["v"]: deepcopy(row)
+        for row_index, row in rows.items()
+        if row_index != "0"
+    }
+    expected_tuples = [
+        ["R001", "李小華", "0922222222", 100, "台北"],
+        ["R002", "林小美", "0944444444", 200, "高雄"],
+        ["R003", "王小明", "0911111111", 300, "台中"],
+        ["R004", "陳大同", "0933333333", 400, "台中"],
+    ]
+
+    for destination_row, expected in enumerate(expected_tuples, start=1):
+        source = source_rows[expected[0]]
+        for column in range(5):
+            rows[str(destination_row)][str(column)] = source[str(column)]
+
+    with TestClient(create_app(database_path)) as first_runtime:
+        saved = first_runtime.put(
+            "/api/workbooks/default",
+            json=save_payload(sorted_snapshot),
+        )
+        assert saved.status_code == 200
+        assert saved.json()["revision"] == 1
+
+    with TestClient(create_app(database_path)) as restarted_runtime:
+        loaded = restarted_runtime.get("/api/workbooks/default")
+        assert loaded.status_code == 200
+        persisted_rows = loaded.json()["snapshot"]["sheets"]["data-operations"][
+            "cellData"
+        ]
+        assert [
+            [persisted_rows[str(row)][str(column)]["v"] for column in range(5)]
+            for row in range(1, 5)
+        ] == expected_tuples
+        assert [persisted_rows["0"][str(column)]["v"] for column in range(5)] == [
+            "ID",
+            "姓名",
+            "電話",
+            "金額",
+            "城市",
+        ]
+
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+    finally:
+        connection.close()
