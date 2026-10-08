@@ -564,3 +564,16 @@ button {
   margin-top: 4px;
 }
 
+dialog.xlsx-dialog {
+  width: min(680px, 85vw);
+  max-height: 80vh;
+  overflow: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 24px;
+  color: #17212f;
+  background: white;
+}
+dialog.xlsx-dialog::backdrop { background: rgb(15 23 42 / 45%); }
+dialog.xlsx-dialog button { margin: 8px; padding: 8px 14px; }
+dialog.xlsx-dialog li { margin: 8px 0; }

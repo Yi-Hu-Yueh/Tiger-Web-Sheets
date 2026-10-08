@@ -17,6 +17,8 @@ import {
 } from '@univerjs/preset-sheets-sort'
 import { createUniver, mergeLocales } from '@univerjs/presets'
 import WorkbookHome from './WorkbookHome'
+import { useXlsx } from './xlsx/useXlsx'
+import { recalculateXlsx } from './xlsx/xlsxRecalculation'
 import {
   CsvImportPreviewDialog,
   CsvWorksheetDialog,
@@ -193,6 +195,7 @@ function App() {
     workbookId: string
     status: SaveStatus
     message?: string
+    recalculate?: boolean
   } | null>(null)
   const [status, setStatus] = useState<SaveStatus>('loading')
   const [loadMessage, setLoadMessage] = useState('')
@@ -233,7 +236,27 @@ function App() {
   } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<WorkbookSummary | null>(null)
   const [documentActionPending, setDocumentActionPending] = useState(false)
-  const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | 'open-local' | 'import-csv' | null>(null)
+  const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | 'open-local' | 'import-csv' | 'import-xlsx' | null>(null)
+
+  const xlsx = useXlsx({
+    collect: async (signal) => {
+      const api = apiRef.current, workbook = workbookRef.current
+      if (!api || !workbook || savingRef.current) throw new Error('目前活頁簿尚未就緒。')
+      const generation = changeGenerationRef.current
+      await recalculateXlsx(api, workbook.save(), signal)
+      if (generation !== changeGenerationRef.current || workbook !== workbookRef.current) throw new Error('活頁簿在匯出檢查期間已變更，請重試。')
+      signal.throwIfAborted()
+      return workbook.save()
+    },
+    commit: async (name, snapshot) => {
+      const created = await createWorkbook(name, snapshot)
+      pendingExternalWriteRef.current = null
+      openingStatusRef.current = { workbookId: created.id, status: 'unsaved', recalculate: true }
+      setStatus('loading')
+      setCurrentWorkbook(created)
+      setReloadToken((value) => value + 1)
+    },
+  })
 
   useEffect(() => {
     currentWorkbookRef.current = currentWorkbook
@@ -310,6 +333,9 @@ function App() {
       // Univer schedules initial hydration and formula commands after workbook creation.
       // Keep dirty tracking detached until those snapshot-derived mutations settle.
       await new Promise((resolve) => window.setTimeout(resolve, 500))
+      if (openingStatusRef.current?.workbookId === openedWorkbook.id && openingStatusRef.current.recalculate) {
+        await recalculateXlsx(univerAPI, snapshotToOpen, abortController.signal)
+      }
       try {
         await univerAPI.getFormula().onCalculationResultApplied(1_000)
       } catch {
@@ -754,6 +780,11 @@ function App() {
     else void importCsvFile()
   }, [importCsvFile, isDirty])
 
+  const requestXlsxImport = () => {
+    if (isDirty) setPendingNavigation('import-xlsx')
+    else void xlsx.importFile()
+  }
+
   const confirmName = useCallback(async (name: string) => {
     if (!nameDialog) return
     setDocumentActionPending(true)
@@ -815,11 +846,11 @@ function App() {
     setDocumentActionPending(false)
     if (saved) {
       setPendingNavigation(null)
-      if (action === 'open-local' || action === 'import-csv') {
+      if (action === 'open-local' || action === 'import-csv' || action === 'import-xlsx') {
         setLoadMessage(
           action === 'open-local'
             ? '目前活頁簿已儲存。請再次按「開啟本機檔案」以顯示原生選擇器。'
-            : '目前活頁簿已儲存。請再次按「匯入 CSV」以顯示原生選擇器。',
+            : `目前活頁簿已儲存。請再次按「匯入 ${action === 'import-xlsx' ? 'XLSX' : 'CSV'}」以顯示原生選擇器。`,
         )
       } else {
         performNavigation(action)
@@ -1017,6 +1048,7 @@ function App() {
           onNew={() => setNameDialog({ mode: 'new' })}
           onOpenLocal={() => void openLocalFile()}
           onImportCsv={() => void importCsvFile()}
+          onImportXlsx={() => void xlsx.importFile()}
           onOpen={openWorkbook}
           onRename={(target) => setNameDialog({ mode: 'rename', target })}
           onDelete={setDeleteTarget}
@@ -1054,6 +1086,8 @@ function App() {
           onConfirm={confirmCsvImport}
           onCancel={() => setCsvPreview(null)}
         />}
+        {xlsx.notice && <p role="status">{xlsx.notice}</p>}
+        {xlsx.dialogs}
       </>
     )
   }
@@ -1074,6 +1108,9 @@ function App() {
           <button type="button" className="secondary-button compact-button" onClick={requestOpenLocal}>開啟本機檔案</button>
           <button type="button" className="secondary-button compact-button" onClick={requestCsvImport} disabled={csvPending}>匯入 CSV</button>
           <button type="button" className="secondary-button compact-button" onClick={requestCsvExport} disabled={csvPending || !canSave}>匯出 CSV</button>
+          <button type="button" className="secondary-button compact-button" onClick={requestXlsxImport} disabled={xlsx.busy || csvPending || !canSave}>匯入 XLSX</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => void xlsx.inspectExport()} disabled={xlsx.busy || csvPending || !canSave}>匯出 XLSX</button>
+          {xlsx.notice && <span role="status">{xlsx.notice}</span>}
           <button type="button" className="secondary-button compact-button" onClick={() => void saveAs()} disabled={!canSave}>另存新檔</button>
           <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'rename', target: currentWorkbook })}>重新命名</button>
           {safeSortNotice && <span className="safe-sort-notice" role="status">{safeSortNotice}</span>}
@@ -1228,6 +1265,8 @@ function App() {
           void openLocalFile()
         } else if (action === 'import-csv') {
           void importCsvFile()
+        } else if (action === 'import-xlsx') {
+          void xlsx.importFile()
         } else {
           performNavigation(action, true)
         }
@@ -1259,6 +1298,7 @@ function App() {
       }}
       onCancel={() => setCsvExportSheets(null)}
     />}
+    {xlsx.dialogs}
     </>
   )
 }

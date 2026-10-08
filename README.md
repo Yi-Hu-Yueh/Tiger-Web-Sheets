@@ -207,8 +207,8 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 - Single-column sorting of a multi-column record set is unsupported; the normal-looking Univer quick-sort actions are not exposed. Use the documented **安全排序** workflow.
 - Self-row-derived formula columns must remain outside the tested sort rectangle; Univer 1.0.3 does not rewrite those moved formula references in the diagnostic included-column path.
 - Generic TSV paste can auto-convert leading-zero values before sorting; this owner-observed issue remains for a dedicated repair. The sort fixture stores phone numbers as strings and verifies that sorting itself preserves them.
-- CSV import/export is not implemented.
-- XLSX import/export is not implemented.
+- CSV import/export supports the documented single-sheet UTF-8 exchange boundary.
+- Phase 1G-R1 technical implementation: **PASS**. Phase 1G-R1 Owner Runtime: **PASS** (owner-confirmed desktop Chrome/Edge acceptance). XLSX import/export uses pinned ExcelJS 4.4.0 in a dedicated cancellable Web Worker. `.tws.json` remains the native format; XLSX is bounded exchange, not full Excel compatibility. See [docs/PHASE1G_XLSX.md](docs/PHASE1G_XLSX.md) for the supported baseline, warnings/refusals, security limits, and tested performance boundary.
 - Stored documents are Univer snapshot JSON in SQLite plus `.tws.json` mirrors, not XLSX workbooks.
 - Conditional formatting, data validation, charts, pivot tables, printing, PDF export, and version history are not implemented.
 - Authentication, collaboration, AI, and cloud deployment are not implemented.

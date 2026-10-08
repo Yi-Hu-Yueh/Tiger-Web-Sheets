@@ -18,7 +18,7 @@ type FilePermissionMode = 'read' | 'readwrite'
 type FilePermissionState = 'granted' | 'denied' | 'prompt'
 
 export type NativeFileWritable = {
-  write: (data: string) => Promise<void>
+  write: (data: string | ArrayBuffer) => Promise<void>
   close: () => Promise<void>
   abort?: () => Promise<void>
 }

@@ -11,6 +11,7 @@
     "validate:phase1d-safe-sort": "node scripts/phase1d-safe-sort-check.mjs",
     "validate:phase1e-local-files": "node scripts/phase1e-local-file-check.mjs",
     "validate:phase1f-csv": "node scripts/phase1f-csv-check.mjs",
+    "validate:phase1g-xlsx": "node scripts/phase1g-xlsx-check.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,9 +21,12 @@
     "@univerjs/preset-sheets-find-replace": "1.0.3",
     "@univerjs/preset-sheets-sort": "1.0.3",
     "@univerjs/presets": "1.0.3",
+    "exceljs": "4.4.0",
+    "fflate": "0.8.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "saxes": "6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

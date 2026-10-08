@@ -4,7 +4,7 @@ function modifiedTime(value: string): string {
   return new Intl.DateTimeFormat('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
-export default function WorkbookHome({ workbooks, loading, error, notice, csvPending, onNew, onOpenLocal, onImportCsv, onOpen, onRename, onDelete, onRetry }: {
+export default function WorkbookHome({ workbooks, loading, error, notice, csvPending, onNew, onOpenLocal, onImportCsv, onImportXlsx, onOpen, onRename, onDelete, onRetry }: {
   workbooks: WorkbookSummary[]
   loading: boolean
   error: string
@@ -13,6 +13,7 @@ export default function WorkbookHome({ workbooks, loading, error, notice, csvPen
   onNew: () => void
   onOpenLocal: () => void
   onImportCsv: () => void
+  onImportXlsx: () => void
   onOpen: (workbook: WorkbookSummary) => void
   onRename: (workbook: WorkbookSummary) => void
   onDelete: (workbook: WorkbookSummary) => void
@@ -25,6 +26,7 @@ export default function WorkbookHome({ workbooks, loading, error, notice, csvPen
         <div className="home-actions">
           <button type="button" className="secondary-button" onClick={onOpenLocal}>開啟本機檔案</button>
           <button type="button" className="secondary-button" onClick={onImportCsv} disabled={csvPending}>匯入 CSV</button>
+          <button type="button" className="secondary-button" onClick={onImportXlsx} disabled={csvPending}>匯入 XLSX</button>
           <button type="button" className="primary-button" onClick={onNew}>新增活頁簿</button>
         </div>
       </header>
