@@ -23,6 +23,195 @@ button {
   font: inherit;
 }
 
+.primary-button,
+.secondary-button,
+.danger-button,
+.danger-link,
+.home-message button {
+  border-radius: 7px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.primary-button {
+  border: 1px solid #176b3a;
+  color: #fff;
+  background: #176b3a;
+}
+
+.secondary-button {
+  border: 1px solid #afbeb4;
+  color: #254232;
+  background: #fff;
+}
+
+.danger-button {
+  border: 1px solid #b42318;
+  color: #fff;
+  background: #b42318;
+}
+
+.danger-link {
+  border: 0;
+  color: #a5231b;
+  background: transparent;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled,
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.home-shell {
+  height: 100%;
+  overflow: auto;
+  padding: 42px max(24px, calc((100% - 1040px) / 2));
+  background: #f3f6f4;
+}
+
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #d5dfd8;
+}
+
+.home-header h1,
+.home-header p,
+.workbook-card h2,
+.workbook-card p,
+.document-dialog h2,
+.document-dialog p {
+  margin: 0;
+}
+
+.home-header h1 {
+  color: #153f2c;
+  font-size: 28px;
+}
+
+.home-header p {
+  margin-top: 5px;
+  color: #66736b;
+}
+
+.workbook-list {
+  display: grid;
+  gap: 12px;
+  padding: 24px 0;
+}
+
+.workbook-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border: 1px solid #d5dfd8;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(26 59 40 / 5%);
+}
+
+.workbook-card h2 {
+  color: #1d3829;
+  font-size: 17px;
+}
+
+.workbook-card p {
+  margin-top: 6px;
+  color: #66736b;
+  font-size: 13px;
+}
+
+.card-actions,
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.empty-list,
+.home-message {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 180px;
+  color: #5d6d63;
+}
+
+.empty-list {
+  flex-direction: column;
+  border: 1px dashed #bccbc1;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.home-message--error {
+  color: #9d2119;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(20 34 26 / 45%);
+}
+
+.document-dialog {
+  width: min(440px, 100%);
+  padding: 24px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 60px rgb(12 25 17 / 28%);
+}
+
+.document-dialog h2 {
+  color: #183a28;
+  font-size: 20px;
+}
+
+.document-dialog p {
+  margin-top: 10px;
+  color: #5b6860;
+  line-height: 1.5;
+}
+
+.document-dialog label {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  color: #35433b;
+  font-size: 14px;
+}
+
+.document-dialog input {
+  width: 100%;
+  border: 1px solid #adbbb1;
+  border-radius: 7px;
+  padding: 10px 11px;
+  color: #17211b;
+  font: inherit;
+}
+
+.dialog-actions {
+  margin-top: 24px;
+}
+
+.dialog-actions--three {
+  flex-wrap: wrap;
+}
+
 .app-shell {
   display: flex;
   width: 100%;
@@ -51,11 +240,38 @@ button {
   letter-spacing: 0.01em;
 }
 
+.document-identity {
+  display: flex;
+  min-width: 170px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.document-identity strong {
+  overflow: hidden;
+  max-width: 240px;
+  color: #58635d;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-actions,
 .save-controls {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.app-actions {
+  gap: 7px;
+}
+
+.compact-button {
+  padding: 6px 9px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .safe-sort-notice,

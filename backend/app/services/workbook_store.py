@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,24 @@ class WorkbookStore:
             connection.close()
 
         return self._to_record(row) if row is not None else None
+
+    def list(self) -> list[WorkbookRecord]:
+        connection = connect(self.database_path)
+        try:
+            rows = connection.execute(
+                """
+                SELECT id, name, snapshot_json, revision, created_at, updated_at
+                FROM workbooks
+                ORDER BY updated_at DESC, id ASC
+                """
+            ).fetchall()
+        finally:
+            connection.close()
+        return [self._to_record(row) for row in rows]
+
+    def create(self, name: str, snapshot: dict[str, Any]) -> WorkbookRecord:
+        workbook_id = str(uuid.uuid4())
+        return self.put(workbook_id, name, snapshot, expected_revision=0)
 
     def put(
         self,
@@ -101,6 +120,65 @@ class WorkbookStore:
             created_at=datetime.fromisoformat(created_at),
             updated_at=datetime.fromisoformat(timestamp),
         )
+
+    def rename(
+        self, workbook_id: str, name: str, expected_revision: int
+    ) -> WorkbookRecord | None:
+        timestamp = datetime.now(timezone.utc).isoformat()
+        connection = connect(self.database_path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                """
+                SELECT id, name, snapshot_json, revision, created_at, updated_at
+                FROM workbooks WHERE id = ?
+                """,
+                (workbook_id,),
+            ).fetchone()
+            if current is None:
+                connection.rollback()
+                return None
+            current_revision = int(current["revision"])
+            if current_revision != expected_revision:
+                raise WorkbookConflictError(
+                    f"stale revision {expected_revision}; current revision is {current_revision}"
+                )
+            revision = current_revision + 1
+            connection.execute(
+                """
+                UPDATE workbooks
+                SET name = ?, revision = ?, updated_at = ?
+                WHERE id = ? AND revision = ?
+                """,
+                (name, revision, timestamp, workbook_id, current_revision),
+            )
+            connection.commit()
+            return WorkbookRecord(
+                id=str(current["id"]),
+                name=name,
+                snapshot=json.loads(str(current["snapshot_json"])),
+                revision=revision,
+                created_at=datetime.fromisoformat(str(current["created_at"])),
+                updated_at=datetime.fromisoformat(timestamp),
+            )
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def delete(self, workbook_id: str) -> bool:
+        connection = connect(self.database_path)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute("DELETE FROM workbooks WHERE id = ?", (workbook_id,))
+            connection.commit()
+            return cursor.rowcount == 1
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     @staticmethod
     def _to_record(row: Any) -> WorkbookRecord:

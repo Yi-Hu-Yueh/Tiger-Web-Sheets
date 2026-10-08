@@ -4,11 +4,18 @@ import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 
 from app.database import connect, resolve_runtime_identity
 from app.models import WorkbookRecord
-from app.schemas import HealthResponse, WorkbookResponse, WorkbookWriteRequest
+from app.schemas import (
+    HealthResponse,
+    WorkbookCreateRequest,
+    WorkbookRenameRequest,
+    WorkbookResponse,
+    WorkbookSummary,
+    WorkbookWriteRequest,
+)
 from app.services.workbook_store import WorkbookConflictError, WorkbookStore
 
 CANONICAL_WORKBOOK_ID = "default"
@@ -20,6 +27,17 @@ def _response(record: WorkbookRecord) -> WorkbookResponse:
         name=record.name,
         snapshot=record.snapshot,
         revision=record.revision,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _summary(record: WorkbookRecord) -> WorkbookSummary:
+    return WorkbookSummary(
+        id=record.id,
+        name=record.name,
+        revision=record.revision,
+        created_at=record.created_at,
         updated_at=record.updated_at,
     )
 
@@ -59,10 +77,27 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             instance_nonce=runtime_identity.instance_nonce,
         )
 
+    @application.get("/api/workbooks", response_model=list[WorkbookSummary])
+    def list_workbooks(request: Request) -> list[WorkbookSummary]:
+        try:
+            return [_summary(record) for record in request.app.state.workbook_store.list()]
+        except (sqlite3.Error, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="database unavailable") from error
+
+    @application.post(
+        "/api/workbooks", response_model=WorkbookResponse, status_code=status.HTTP_201_CREATED
+    )
+    def create_workbook(
+        payload: WorkbookCreateRequest, request: Request
+    ) -> WorkbookResponse:
+        try:
+            record = request.app.state.workbook_store.create(payload.name, payload.snapshot)
+        except (sqlite3.Error, OSError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="create failed") from error
+        return _response(record)
+
     @application.get("/api/workbooks/{workbook_id}", response_model=WorkbookResponse)
     def get_workbook(workbook_id: str, request: Request) -> WorkbookResponse:
-        if workbook_id != CANONICAL_WORKBOOK_ID:
-            raise HTTPException(status_code=404, detail="workbook not found")
         try:
             record = request.app.state.workbook_store.get(workbook_id)
         except (sqlite3.Error, ValueError, TypeError) as error:
@@ -77,9 +112,9 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         payload: WorkbookWriteRequest,
         request: Request,
     ) -> WorkbookResponse:
-        if workbook_id != CANONICAL_WORKBOOK_ID:
-            raise HTTPException(status_code=404, detail="workbook not found")
         try:
+            if workbook_id != CANONICAL_WORKBOOK_ID and request.app.state.workbook_store.get(workbook_id) is None:
+                raise HTTPException(status_code=404, detail="workbook not found")
             record = request.app.state.workbook_store.put(
                 workbook_id=workbook_id,
                 name=payload.name,
@@ -91,6 +126,34 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         except (sqlite3.Error, OSError, ValueError, TypeError) as error:
             raise HTTPException(status_code=503, detail="save failed") from error
         return _response(record)
+
+    @application.patch("/api/workbooks/{workbook_id}", response_model=WorkbookResponse)
+    def rename_workbook(
+        workbook_id: str, payload: WorkbookRenameRequest, request: Request
+    ) -> WorkbookResponse:
+        try:
+            record = request.app.state.workbook_store.rename(
+                workbook_id, payload.name, payload.expected_revision
+            )
+        except WorkbookConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except (sqlite3.Error, OSError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="rename failed") from error
+        if record is None:
+            raise HTTPException(status_code=404, detail="workbook not found")
+        return _response(record)
+
+    @application.delete(
+        "/api/workbooks/{workbook_id}", status_code=status.HTTP_204_NO_CONTENT
+    )
+    def delete_workbook(workbook_id: str, request: Request) -> Response:
+        try:
+            deleted = request.app.state.workbook_store.delete(workbook_id)
+        except (sqlite3.Error, OSError) as error:
+            raise HTTPException(status_code=503, detail="delete failed") from error
+        if not deleted:
+            raise HTTPException(status_code=404, detail="workbook not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return application
 

@@ -1,13 +1,13 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets Phase 1D is a persistent browser spreadsheet vertical slice. It connects an editable open-source Univer workbook to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics, while using Univer's native open-source spreadsheet operations, formatting, formulas, sort model, filter, find, and replace UI.
+Tiger Web Sheets Phase 1E is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and a project-local SQLite database with explicit manual-save and optimistic-revision semantics, while preserving Univer's native open-source spreadsheet operations, formatting, formulas, sort model, filter, find, and replace UI.
 
 ## Architecture
 
 - Frontend: React 19.3.0, TypeScript 6.0.3, Vite 8.3.3
 - Spreadsheet: `@univerjs/presets`, `@univerjs/preset-sheets-core`, `@univerjs/preset-sheets-sort`, `@univerjs/preset-sheets-filter`, and `@univerjs/preset-sheets-find-replace` 1.0.3
 - Backend: FastAPI 0.128.2 on Python 3.11.3
-- Storage: Python `sqlite3`, one canonical workbook with ID `default`
+- Storage: Python `sqlite3`, multiple workbooks with stable UUID identities; an existing `default` record remains supported
 - Stored format: complete Tiger-Web-Sheets/Univer workbook snapshot JSON, not an XLSX file
 - Frontend URL: <http://127.0.0.1:5173/>
 - Backend health URL: <http://127.0.0.1:18085/api/health>
@@ -80,7 +80,21 @@ Dependencies are locked. To restore them:
 - `儲存失敗`: the API/database did not confirm a committed save; local edits remain available for retry
 - `儲存衝突`: the browser revision is stale; the application does not overwrite the newer stored snapshot
 
-On startup, a stored workbook is authoritative. The Phase 0 sample is used only when the API explicitly returns 404. If the backend is unavailable, the app shows a backend error instead of claiming that data is saved.
+On startup, the application shows the workbook list. Opening a document loads that exact record and revision. If the backend is unavailable, the app shows a backend error instead of claiming that data is saved.
+
+## Phase 1E workbook management
+
+- **新增活頁簿** creates a committed database record immediately with a new UUID and a blank worksheet, then opens it. The first record revision is 1.
+- **開啟** loads only the selected workbook ID and reconstructs a fresh Univer instance from its committed snapshot.
+- **儲存** remains manual and updates only the current workbook with `expected_revision` protection.
+- **另存新檔** captures the current complete snapshot, creates a separate UUID record, and makes the copy current. Later edits to either record are isolated.
+- **重新命名** changes document metadata only. The workbook ID and snapshot, including worksheet names, are preserved.
+- **刪除** shows an explicit irreversible-action confirmation and deletes only the selected record.
+- Returning to the list or starting another workbook while dirty presents **儲存並繼續**, **放棄變更**, and **取消**. Browser refresh/close is guarded with `beforeunload` where browser policy permits.
+
+Workbook names may repeat. The list shows modified time and a short stable document identifier so records remain distinguishable. Records are ordered by most recently updated first.
+
+The stored format is a complete Tiger-Web-Sheets/Univer snapshot inside SQLite. These records are not `.xlsx` files and Phase 1E does not provide OS file-picker, CSV, or XLSX workflows. Detailed behavior and validation are in [docs/PHASE1E_WORKBOOK_MANAGEMENT.md](docs/PHASE1E_WORKBOOK_MANAGEMENT.md).
 
 ## Phase 1B spreadsheet operations
 
@@ -126,10 +140,14 @@ Detailed evidence, exact sort orders, filter persistence semantics, the formula-
 ## API
 
 - `GET /api/health`
-- `GET /api/workbooks/default`
-- `PUT /api/workbooks/default`
+- `GET /api/workbooks`
+- `POST /api/workbooks`
+- `GET /api/workbooks/{workbook_id}`
+- `PUT /api/workbooks/{workbook_id}`
+- `PATCH /api/workbooks/{workbook_id}`
+- `DELETE /api/workbooks/{workbook_id}`
 
-The PUT body contains the complete Univer snapshot and `expected_revision`. A new workbook starts at revision 1; committed updates increment it. A stale expected revision returns HTTP 409.
+POST creates a collision-resistant UUID record and never overwrites an existing document. PUT contains the complete Univer snapshot and `expected_revision`; PATCH renames metadata without changing snapshot contents or identity. Committed saves and renames increment that workbook's revision. A stale expected revision returns HTTP 409. Existing `default` records are listed and opened normally and remain compatible with the legacy first-save PUT path.
 
 ## Validation
 
@@ -152,8 +170,7 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 ## Current limitations
 
 - Autosave is not implemented.
-- A workbook/document manager is not implemented.
-- Save As and document rename workflows are not implemented.
+- Autosave remains intentionally unsupported; manual Save is authoritative.
 - Single-column sorting of a multi-column record set is unsupported; the normal-looking Univer quick-sort actions are not exposed. Use the documented **安全排序** workflow.
 - Self-row-derived formula columns must remain outside the tested sort rectangle; Univer 1.0.3 does not rewrite those moved formula references in the diagnostic included-column path.
 - Generic TSV paste can auto-convert leading-zero values before sorting; this owner-observed issue remains for a dedicated repair. The sort fixture stores phone numbers as strings and verifies that sorting itself preserves them.

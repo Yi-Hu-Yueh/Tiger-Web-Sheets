@@ -16,6 +16,19 @@ import {
   UniverSheetsSortPlugin,
 } from '@univerjs/preset-sheets-sort'
 import { createUniver, mergeLocales } from '@univerjs/presets'
+import WorkbookHome from './WorkbookHome'
+import { DeleteDialog, NameDialog, UnsavedDialog } from './WorkbookDialogs'
+import {
+  ApiError,
+  createWorkbook,
+  deleteWorkbook,
+  listWorkbooks,
+  loadWorkbook,
+  renameWorkbook,
+  saveWorkbook,
+  type PersistedWorkbook,
+  type WorkbookSummary,
+} from './workbookApi'
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-filter/lib/index.css'
 import '@univerjs/preset-sheets-find-replace/lib/index.css'
@@ -24,7 +37,6 @@ import '@univerjs/preset-sheets-find-replace/lib/index.css'
 // Tiger exposes one explicit whole-record workflow below and always sets hasTitle.
 const UniverSheetsSafeSortPreset = () => ({ plugins: [UniverSheetsSortPlugin] })
 
-const WORKBOOK_ID = 'default'
 const NON_PERSISTENT_MUTATIONS = new Set(['doc.mutation.rich-text-editing'])
 const PERSISTED_COMMANDS = new Set([
   'sheet.command.replace',
@@ -54,49 +66,25 @@ function isPersistedWorkbookMutation(event: {
   return true
 }
 
-const fallbackWorkbook: IWorkbookData = {
-  id: 'tiger-phase-1a-workbook',
-  name: 'Tiger Web Sheets',
-  appVersion: '1.0.0',
-  locale: LocaleType.ZH_TW,
-  styles: {},
-  sheetOrder: ['sheet-01'],
-  sheets: {
-    'sheet-01': {
-      id: 'sheet-01',
-      name: '工作表1',
-      rowCount: 100,
-      columnCount: 26,
-      cellData: {
-        0: {
-          0: { v: 10 },
-          1: { v: '台中公司' },
-        },
-        1: {
-          0: { v: 20 },
-        },
-        2: {
-          0: { f: '=SUM(A1:A2)' },
-        },
+function freshWorkbook(name: string): IWorkbookData {
+  const workbookId = crypto.randomUUID()
+  return {
+    id: workbookId,
+    name,
+    appVersion: '1.0.0',
+    locale: LocaleType.ZH_TW,
+    styles: {},
+    sheetOrder: ['sheet-01'],
+    sheets: {
+      'sheet-01': {
+        id: 'sheet-01',
+        name: '工作表1',
+        rowCount: 100,
+        columnCount: 26,
+        cellData: {},
       },
     },
-  },
-}
-
-type PersistedWorkbook = {
-  id: string
-  name: string
-  snapshot: IWorkbookData
-  revision: number
-  updated_at: string
-}
-
-type RuntimeHealth = {
-  status: string
-  database: string
-  runtime_mode: string
-  database_path: string
-  instance_nonce: string | null
+  }
 }
 
 type SaveStatus =
@@ -121,6 +109,12 @@ function valuesChanged(before: unknown[][], after: unknown[][]): boolean {
   return JSON.stringify(before) !== JSON.stringify(after)
 }
 
+function newestFirst(items: WorkbookSummary[]): WorkbookSummary[] {
+  return [...items].sort((left, right) =>
+    right.updated_at.localeCompare(left.updated_at) || left.id.localeCompare(right.id),
+  )
+}
+
 const statusLabels: Record<SaveStatus, string> = {
   loading: '載入中',
   unsaved: '未儲存',
@@ -131,81 +125,12 @@ const statusLabels: Record<SaveStatus, string> = {
   'load-error': '後端連線失敗',
 }
 
-class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message)
-  }
-}
-
-function normalizeRuntimePath(value: string): string {
-  return value.replaceAll('\\', '/').toLowerCase()
-}
-
-async function verifyRuntimeIdentity(signal?: AbortSignal): Promise<void> {
-  const expectedMode = import.meta.env.VITE_TIGER_RUNTIME_MODE
-  const expectedDatabasePath = import.meta.env.VITE_TIGER_DATABASE_PATH
-  const expectedNonce = import.meta.env.VITE_TIGER_INSTANCE_NONCE
-  const configured = [expectedMode, expectedDatabasePath, expectedNonce]
-
-  if (configured.every((value) => !value)) return
-  if (configured.some((value) => !value)) {
-    throw new ApiError('隔離測試環境識別設定不完整', 503)
-  }
-
-  const response = await fetch('/api/health', { signal })
-  if (!response.ok) throw new ApiError('無法驗證後端隔離環境', response.status)
-  const health = await response.json() as RuntimeHealth
-  if (
-    health.status !== 'ok' ||
-    health.runtime_mode !== expectedMode ||
-    health.instance_nonce !== expectedNonce ||
-    normalizeRuntimePath(health.database_path) !== normalizeRuntimePath(expectedDatabasePath)
-  ) {
-    throw new ApiError('後端隔離環境識別不符，已拒絕存取', 503)
-  }
-}
-
-async function loadWorkbook(signal: AbortSignal): Promise<PersistedWorkbook | null> {
-  await verifyRuntimeIdentity(signal)
-  const response = await fetch(`/api/workbooks/${WORKBOOK_ID}`, { signal })
-  if (response.status === 404) return null
-  if (!response.ok) throw new ApiError('無法載入活頁簿', response.status)
-  return response.json() as Promise<PersistedWorkbook>
-}
-
-async function persistWorkbook(
-  snapshot: IWorkbookData,
-  expectedRevision: number,
-): Promise<PersistedWorkbook> {
-  await verifyRuntimeIdentity()
-  const response = await fetch(`/api/workbooks/${WORKBOOK_ID}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: snapshot.name || 'Tiger Web Sheets',
-      snapshot,
-      expected_revision: expectedRevision,
-    }),
-  })
-
-  if (!response.ok) {
-    throw new ApiError(
-      response.status === 409 ? '儲存衝突' : '儲存失敗',
-      response.status,
-    )
-  }
-
-  return response.json() as Promise<PersistedWorkbook>
-}
-
 function App() {
   const containerRef = useRef<HTMLDivElement>(null)
   const workbookRef = useRef<ReturnType<ReturnType<typeof createUniver>['univerAPI']['createWorkbook']> | null>(null)
   const apiRef = useRef<ReturnType<typeof createUniver>['univerAPI'] | null>(null)
   const revisionRef = useRef(0)
+  const currentWorkbookRef = useRef<PersistedWorkbook | null>(null)
   const changeGenerationRef = useRef(0)
   const savingRef = useRef(false)
   const [status, setStatus] = useState<SaveStatus>('loading')
@@ -221,8 +146,44 @@ function App() {
   const [filterPending, setFilterPending] = useState(false)
   const [filterNotice, setFilterNotice] = useState('')
   const [filterError, setFilterError] = useState('')
+  const [currentWorkbook, setCurrentWorkbook] = useState<PersistedWorkbook | null>(null)
+  const [workbooks, setWorkbooks] = useState<WorkbookSummary[]>([])
+  const [homeLoading, setHomeLoading] = useState(true)
+  const [homeError, setHomeError] = useState('')
+  const [homeReloadToken, setHomeReloadToken] = useState(0)
+  const [nameDialog, setNameDialog] = useState<{
+    mode: 'new' | 'save-as' | 'rename'
+    target?: WorkbookSummary
+  } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<WorkbookSummary | null>(null)
+  const [documentActionPending, setDocumentActionPending] = useState(false)
+  const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | null>(null)
 
   useEffect(() => {
+    currentWorkbookRef.current = currentWorkbook
+  }, [currentWorkbook])
+
+  useEffect(() => {
+    if (currentWorkbook) return
+    const abortController = new AbortController()
+    listWorkbooks(abortController.signal)
+      .then(setWorkbooks)
+      .catch((error: unknown) => {
+        if (!abortController.signal.aborted) {
+          setHomeError(error instanceof Error ? error.message : '無法載入活頁簿清單')
+        }
+      })
+      .finally(() => {
+        if (!abortController.signal.aborted) setHomeLoading(false)
+      })
+    return () => abortController.abort()
+  }, [currentWorkbook, homeReloadToken])
+
+  useEffect(() => {
+    const workbookToOpen = currentWorkbookRef.current
+    if (!workbookToOpen) return
+    const snapshotToOpen = workbookToOpen.snapshot
+    const revisionToOpen = workbookToOpen.revision
     const abortController = new AbortController()
     let disposed = false
     let univerInstance: ReturnType<typeof createUniver>['univer'] | null = null
@@ -234,7 +195,6 @@ function App() {
     changeGenerationRef.current = 0
 
     async function initialize() {
-      const persisted = await loadWorkbook(abortController.signal)
       if (disposed || !containerRef.current) return
 
       const { univer, univerAPI } = createUniver({
@@ -256,9 +216,11 @@ function App() {
 
       univerInstance = univer
       apiRef.current = univerAPI
-      const workbook = univerAPI.createWorkbook(persisted?.snapshot ?? fallbackWorkbook)
+      // Univer owns and mutates the object it receives. Keep the last committed
+      // API snapshot immutable so Discard can reconstruct it exactly.
+      const workbook = univerAPI.createWorkbook(structuredClone(snapshotToOpen))
       workbookRef.current = workbook
-      revisionRef.current = persisted?.revision ?? 0
+      revisionRef.current = revisionToOpen
 
       // Univer schedules initial hydration and formula commands after workbook creation.
       // Keep dirty tracking detached until those snapshot-derived mutations settle.
@@ -280,7 +242,7 @@ function App() {
         }),
       )
 
-      setStatus(persisted ? 'saved' : 'unsaved')
+      setStatus('saved')
     }
 
     initialize().catch((error: unknown) => {
@@ -297,12 +259,13 @@ function App() {
       apiRef.current = null
       univerInstance?.dispose()
     }
-  }, [reloadToken])
+  }, [currentWorkbook?.id, reloadToken])
 
   const save = useCallback(async () => {
     const workbook = workbookRef.current
     const univerAPI = apiRef.current
-    if (!workbook || !univerAPI || savingRef.current) return
+    const current = currentWorkbookRef.current
+    if (!workbook || !univerAPI || !current || savingRef.current) return false
 
     savingRef.current = true
     setStatus('saving')
@@ -311,19 +274,137 @@ function App() {
       const generationAtSnapshot = changeGenerationRef.current
       const snapshot = workbook.save()
       const [persisted] = await Promise.all([
-        persistWorkbook(snapshot, revisionRef.current),
+        saveWorkbook(current.id, current.name, snapshot, revisionRef.current),
         new Promise((resolve) => window.setTimeout(resolve, 300)),
       ])
       revisionRef.current = persisted.revision
+      setCurrentWorkbook(persisted)
       setStatus(
         changeGenerationRef.current === generationAtSnapshot ? 'saved' : 'unsaved',
       )
+      return true
     } catch (error: unknown) {
       setStatus(error instanceof ApiError && error.status === 409 ? 'conflict' : 'failed')
+      return false
     } finally {
       savingRef.current = false
     }
   }, [])
+
+  const isDirty = status === 'unsaved' || status === 'failed' || status === 'conflict'
+
+  useEffect(() => {
+    if (!isDirty) return
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', guard)
+    return () => window.removeEventListener('beforeunload', guard)
+  }, [isDirty])
+
+  const openWorkbook = useCallback(async (summary: WorkbookSummary) => {
+    setHomeError('')
+    setHomeLoading(true)
+    try {
+      const persisted = await loadWorkbook(summary.id)
+      setStatus('loading')
+      setCurrentWorkbook(persisted)
+    } catch (error: unknown) {
+      setHomeError(error instanceof Error ? error.message : '無法開啟活頁簿')
+    } finally {
+      setHomeLoading(false)
+    }
+  }, [])
+
+  const performNavigation = useCallback((action: 'home' | 'new', discard = false) => {
+    setSafeSortSelection(null)
+    setSafeSortError('')
+    if (action === 'home') {
+      setHomeLoading(true)
+      setHomeError('')
+      setCurrentWorkbook(null)
+      setHomeReloadToken((value) => value + 1)
+    } else {
+      if (discard) {
+        setStatus('loading')
+        setReloadToken((value) => value + 1)
+      }
+      setNameDialog({ mode: 'new' })
+    }
+  }, [])
+
+  const requestNavigation = useCallback((action: 'home' | 'new') => {
+    if (isDirty) setPendingNavigation(action)
+    else performNavigation(action)
+  }, [isDirty, performNavigation])
+
+  const confirmName = useCallback(async (name: string) => {
+    if (!nameDialog) return
+    setDocumentActionPending(true)
+    setHomeError('')
+    setLoadMessage('')
+    try {
+      if (nameDialog.mode === 'new') {
+        const snapshot = freshWorkbook(name)
+        const created = await createWorkbook(name, snapshot)
+        setNameDialog(null)
+        setStatus('loading')
+        setCurrentWorkbook(created)
+      } else if (nameDialog.mode === 'save-as') {
+        const snapshot = workbookRef.current?.save()
+        if (!snapshot) throw new Error('目前活頁簿尚未載入')
+        const created = await createWorkbook(name, snapshot)
+        setNameDialog(null)
+        setStatus('loading')
+        setCurrentWorkbook(created)
+      } else {
+        const target = nameDialog.target ?? currentWorkbookRef.current
+        if (!target) throw new Error('找不到要重新命名的活頁簿')
+        const renamed = await renameWorkbook(target.id, name, target.revision)
+        setWorkbooks((items) => newestFirst(
+          items.map((item) => item.id === renamed.id ? renamed : item),
+        ))
+        if (currentWorkbookRef.current?.id === renamed.id) {
+          revisionRef.current = renamed.revision
+          setCurrentWorkbook((current) => current ? { ...current, name: renamed.name, revision: renamed.revision, updated_at: renamed.updated_at } : current)
+        }
+        setNameDialog(null)
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '文件操作失敗'
+      if (currentWorkbookRef.current) setLoadMessage(message)
+      else setHomeError(message)
+    } finally {
+      setDocumentActionPending(false)
+    }
+  }, [nameDialog])
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return
+    setDocumentActionPending(true)
+    try {
+      await deleteWorkbook(deleteTarget.id)
+      setWorkbooks((items) => items.filter((item) => item.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (error: unknown) {
+      setHomeError(error instanceof Error ? error.message : '刪除失敗')
+    } finally {
+      setDocumentActionPending(false)
+    }
+  }, [deleteTarget])
+
+  const saveAndNavigate = useCallback(async () => {
+    const action = pendingNavigation
+    if (!action) return
+    setDocumentActionPending(true)
+    const saved = await save()
+    setDocumentActionPending(false)
+    if (saved) {
+      setPendingNavigation(null)
+      performNavigation(action)
+    }
+  }, [pendingNavigation, performNavigation, save])
 
   const canSave = status !== 'loading' && status !== 'load-error' && status !== 'saving'
 
@@ -503,14 +584,57 @@ function App() {
   const canUseSafeSort = status !== 'loading' && status !== 'load-error' && !safeSortPending
   const canEnableFilter = status !== 'loading' && status !== 'load-error' && !filterPending
 
+  if (!currentWorkbook) {
+    return (
+      <>
+        <WorkbookHome
+          workbooks={workbooks}
+          loading={homeLoading}
+          error={homeError}
+          onNew={() => setNameDialog({ mode: 'new' })}
+          onOpen={openWorkbook}
+          onRename={(target) => setNameDialog({ mode: 'rename', target })}
+          onDelete={setDeleteTarget}
+          onRetry={() => {
+            setHomeLoading(true)
+            setHomeError('')
+            setHomeReloadToken((value) => value + 1)
+          }}
+        />
+        {nameDialog && <NameDialog key={`${nameDialog.mode}-${nameDialog.target?.id ?? ''}`}
+          title={nameDialog.mode === 'new' ? '新增活頁簿' : '重新命名活頁簿'}
+          initialName={nameDialog.mode === 'rename' ? nameDialog.target?.name : '未命名活頁簿'}
+          confirmLabel={nameDialog.mode === 'new' ? '建立' : '重新命名'}
+          pending={documentActionPending}
+          onConfirm={confirmName}
+          onCancel={() => setNameDialog(null)}
+        />}
+        {deleteTarget && <DeleteDialog
+          name={deleteTarget.name}
+          pending={documentActionPending}
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />}
+      </>
+    )
+  }
+
   return (
-    <main className="app-shell">
+    <><main className="app-shell">
       <header className="app-bar">
-        <h1>Tiger Web Sheets</h1>
+        <div className="document-identity">
+          <h1>Tiger Web Sheets</h1>
+          <strong data-testid="current-workbook-name">{currentWorkbook.name}</strong>
+        </div>
         <div className="app-actions">
+          <button type="button" className="secondary-button compact-button" onClick={() => requestNavigation('home')}>活頁簿清單</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => requestNavigation('new')}>新增活頁簿</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'save-as' })}>另存新檔</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'rename', target: currentWorkbook })}>重新命名</button>
           {safeSortNotice && <span className="safe-sort-notice" role="status">{safeSortNotice}</span>}
           {filterNotice && <span className="filter-notice" role="status">{filterNotice}</span>}
           {filterError && <span className="filter-error" role="alert">{filterError}</span>}
+          {loadMessage && status !== 'load-error' && <span className="filter-error" role="alert">{loadMessage}</span>}
           <button
             type="button"
             className="filter-button"
@@ -639,6 +763,25 @@ function App() {
         )}
       </section>
     </main>
+    {nameDialog && <NameDialog key={nameDialog.mode}
+      title={nameDialog.mode === 'save-as' ? '另存新檔' : nameDialog.mode === 'new' ? '新增活頁簿' : '重新命名活頁簿'}
+      initialName={nameDialog.mode === 'save-as' ? `${currentWorkbook.name}-副本` : nameDialog.mode === 'rename' ? currentWorkbook.name : '未命名活頁簿'}
+      confirmLabel={nameDialog.mode === 'save-as' ? '另存' : nameDialog.mode === 'new' ? '建立' : '重新命名'}
+      pending={documentActionPending}
+      onConfirm={confirmName}
+      onCancel={() => setNameDialog(null)}
+    />}
+    {pendingNavigation && <UnsavedDialog
+      pending={documentActionPending}
+      onSave={saveAndNavigate}
+      onDiscard={() => {
+        const action = pendingNavigation
+        setPendingNavigation(null)
+        performNavigation(action, true)
+      }}
+      onCancel={() => setPendingNavigation(null)}
+    />}
+    </>
   )
 }
 

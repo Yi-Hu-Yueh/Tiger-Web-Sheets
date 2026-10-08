@@ -53,9 +53,34 @@ class WorkbookWriteRequest(BaseModel):
         return snapshot
 
 
+class WorkbookCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    snapshot: dict[str, Any]
+
+    _validate_snapshot = field_validator("snapshot")(WorkbookWriteRequest.validate_snapshot.__func__)
+
+
+class WorkbookRenameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    expected_revision: int = Field(ge=1)
+
+
+class WorkbookSummary(BaseModel):
+    id: str
+    name: str
+    revision: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class WorkbookResponse(BaseModel):
     id: str
     name: str
     snapshot: dict[str, Any]
     revision: int
+    created_at: datetime
     updated_at: datetime

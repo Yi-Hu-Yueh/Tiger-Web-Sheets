@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import sqlite3
 from pathlib import Path
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +18,10 @@ def save_payload(snapshot: dict, expected_revision: int = 0) -> dict:
         "snapshot": snapshot,
         "expected_revision": expected_revision,
     }
+
+
+def create_payload(name: str, snapshot: dict) -> dict:
+    return {"name": name, "snapshot": snapshot}
 
 
 def test_health_endpoint(client: TestClient) -> None:
@@ -78,6 +83,8 @@ def test_first_save_creates_and_loads_workbook(client: TestClient, workbook_snap
     loaded = client.get("/api/workbooks/default")
     assert loaded.status_code == 200
     assert loaded.json()["snapshot"] == workbook_snapshot
+    listed = client.get("/api/workbooks").json()
+    assert [record["id"] for record in listed] == ["default"]
 
 
 def test_revision_increments_and_stale_revision_conflicts(
@@ -389,3 +396,142 @@ def test_phase1d_safe_sort_survives_backend_restart(
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     finally:
         connection.close()
+
+
+def test_workbook_list_starts_empty_and_create_returns_uuid(
+    client: TestClient, workbook_snapshot: dict
+) -> None:
+    assert client.get("/api/workbooks").json() == []
+    created = client.post(
+        "/api/workbooks", json=create_payload("客戶名單", workbook_snapshot)
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert uuid.UUID(body["id"])
+    assert body["name"] == "客戶名單"
+    assert body["revision"] == 1
+    assert body["snapshot"] == workbook_snapshot
+    assert body["created_at"] == body["updated_at"]
+
+    listed = client.get("/api/workbooks")
+    assert listed.status_code == 200
+    assert listed.json() == [{
+        "id": body["id"],
+        "name": "客戶名單",
+        "revision": 1,
+        "created_at": body["created_at"],
+        "updated_at": body["updated_at"],
+    }]
+
+
+def test_multiple_workbooks_open_and_save_are_isolated(
+    client: TestClient, workbook_snapshot: dict
+) -> None:
+    ids: list[str] = []
+    for name, value in [("客戶名單", "CUSTOMER_A"), ("庫存", "INVENTORY_B"), ("測試", "TEST_C")]:
+        snapshot = deepcopy(workbook_snapshot)
+        snapshot["sheets"]["sheet-01"]["cellData"]["0"]["0"] = {"v": value}
+        created = client.post("/api/workbooks", json=create_payload(name, snapshot))
+        assert created.status_code == 201
+        ids.append(created.json()["id"])
+
+    assert len(set(ids)) == 3
+    for workbook_id, expected in zip(ids, ["CUSTOMER_A", "INVENTORY_B", "TEST_C"]):
+        loaded = client.get(f"/api/workbooks/{workbook_id}")
+        assert loaded.status_code == 200
+        assert loaded.json()["snapshot"]["sheets"]["sheet-01"]["cellData"]["0"]["0"]["v"] == expected
+
+    updated = client.get(f"/api/workbooks/{ids[1]}").json()["snapshot"]
+    updated["sheets"]["sheet-01"]["cellData"]["0"]["0"] = {"v": "INVENTORY_CHANGED"}
+    saved = client.put(f"/api/workbooks/{ids[1]}", json={
+        "name": "庫存", "snapshot": updated, "expected_revision": 1,
+    })
+    assert saved.status_code == 200
+    assert saved.json()["revision"] == 2
+    assert client.get(f"/api/workbooks/{ids[0]}").json()["revision"] == 1
+    assert client.get(f"/api/workbooks/{ids[2]}").json()["revision"] == 1
+
+
+def test_save_as_creates_independent_id_and_snapshot(
+    client: TestClient, workbook_snapshot: dict
+) -> None:
+    original_snapshot = deepcopy(workbook_snapshot)
+    original_snapshot["sheets"]["sheet-01"]["cellData"]["0"]["0"] = {"v": "ORIGINAL"}
+    original = client.post(
+        "/api/workbooks", json=create_payload("客戶名單", original_snapshot)
+    ).json()
+    copy = client.post(
+        "/api/workbooks", json=create_payload("客戶名單-備份", original["snapshot"])
+    ).json()
+    assert copy["id"] != original["id"]
+
+    copy_snapshot = deepcopy(copy["snapshot"])
+    copy_snapshot["sheets"]["sheet-01"]["cellData"]["0"]["0"] = {"v": "COPY_CHANGED"}
+    assert client.put(f"/api/workbooks/{copy['id']}", json={
+        "name": copy["name"], "snapshot": copy_snapshot, "expected_revision": 1,
+    }).status_code == 200
+    reopened = client.get(f"/api/workbooks/{original['id']}").json()
+    assert reopened["snapshot"]["sheets"]["sheet-01"]["cellData"]["0"]["0"]["v"] == "ORIGINAL"
+    assert reopened["revision"] == 1
+
+
+def test_rename_changes_only_metadata_and_revision(
+    client: TestClient, workbook_snapshot: dict
+) -> None:
+    original = client.post(
+        "/api/workbooks", json=create_payload("庫存", workbook_snapshot)
+    ).json()
+    renamed = client.patch(f"/api/workbooks/{original['id']}", json={
+        "name": "商品庫存", "expected_revision": 1,
+    })
+    assert renamed.status_code == 200
+    body = renamed.json()
+    assert body["id"] == original["id"]
+    assert body["name"] == "商品庫存"
+    assert body["snapshot"] == original["snapshot"]
+    assert body["revision"] == 2
+    stale = client.patch(f"/api/workbooks/{original['id']}", json={
+        "name": "過期名稱", "expected_revision": 1,
+    })
+    assert stale.status_code == 409
+
+
+def test_delete_removes_only_selected_workbook(
+    client: TestClient, workbook_snapshot: dict
+) -> None:
+    created = [
+        client.post("/api/workbooks", json=create_payload(name, workbook_snapshot)).json()
+        for name in ["A", "B", "C"]
+    ]
+    assert client.delete(f"/api/workbooks/{created[1]['id']}").status_code == 204
+    assert client.get(f"/api/workbooks/{created[1]['id']}").status_code == 404
+    for record in (created[0], created[2]):
+        loaded = client.get(f"/api/workbooks/{record['id']}").json()
+        assert loaded["revision"] == record["revision"]
+        assert loaded["snapshot"] == record["snapshot"]
+    assert client.delete("/api/workbooks/missing").status_code == 404
+
+
+def test_multi_workbook_list_survives_backend_restart(
+    database_path: Path, workbook_snapshot: dict
+) -> None:
+    with TestClient(create_app(database_path)) as first_runtime:
+        created = [
+            first_runtime.post(
+                "/api/workbooks", json=create_payload(name, workbook_snapshot)
+            ).json()
+            for name in ["文件一", "文件二"]
+        ]
+    with TestClient(create_app(database_path)) as restarted_runtime:
+        listed = restarted_runtime.get("/api/workbooks").json()
+        assert {item["id"] for item in listed} == {item["id"] for item in created}
+        assert all(restarted_runtime.get(f"/api/workbooks/{item['id']}").status_code == 200 for item in created)
+
+
+def test_create_and_rename_malformed_requests_are_rejected(
+    client: TestClient, workbook_snapshot: dict
+) -> None:
+    assert client.post("/api/workbooks", json={"name": "", "snapshot": workbook_snapshot}).status_code == 422
+    assert client.post("/api/workbooks", json={"name": "Broken", "snapshot": {"id": "bad"}}).status_code == 422
+    created = client.post("/api/workbooks", json=create_payload("Good", workbook_snapshot)).json()
+    assert client.patch(f"/api/workbooks/{created['id']}", json={"name": ""}).status_code == 422
