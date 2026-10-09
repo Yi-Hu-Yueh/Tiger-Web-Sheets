@@ -13,12 +13,32 @@ export type PersistedWorkbook = WorkbookSummary & {
   snapshot: IWorkbookData
 }
 
+export type WorkbookVersion = {
+  version_id: string
+  workbook_id: string
+  source_revision: number
+  created_at: string
+  source_type: 'manual' | 'autosave' | 'pre_restore' | 'restore'
+  label: string | null
+  snapshot_sha256: string
+  worksheet_count: number
+  worksheet_names: string[]
+  populated_cell_count: number
+  integrity: 'ok' | 'corrupt'
+}
+
+export type WorkbookRestoreResult = {
+  workbook: PersistedWorkbook
+  safety_version: WorkbookVersion
+}
+
 type RuntimeHealth = {
   status: string
   database: string
   runtime_mode: string
   database_path: string
   workbook_root: string
+  history_root: string
   instance_nonce: string | null
 }
 
@@ -37,7 +57,8 @@ export async function verifyRuntimeIdentity(signal?: AbortSignal): Promise<void>
   const expectedDatabasePath = import.meta.env.VITE_TIGER_DATABASE_PATH
   const expectedNonce = import.meta.env.VITE_TIGER_INSTANCE_NONCE
   const expectedWorkbookRoot = import.meta.env.VITE_TIGER_WORKBOOK_ROOT
-  const configured = [expectedMode, expectedDatabasePath, expectedWorkbookRoot, expectedNonce]
+  const expectedHistoryRoot = import.meta.env.VITE_TIGER_HISTORY_ROOT
+  const configured = [expectedMode, expectedDatabasePath, expectedWorkbookRoot, expectedHistoryRoot, expectedNonce]
 
   if (configured.every((value) => !value)) return
   if (configured.some((value) => !value)) {
@@ -52,7 +73,8 @@ export async function verifyRuntimeIdentity(signal?: AbortSignal): Promise<void>
     health.runtime_mode !== expectedMode ||
     health.instance_nonce !== expectedNonce ||
     normalizeRuntimePath(health.database_path) !== normalizeRuntimePath(expectedDatabasePath) ||
-    normalizeRuntimePath(health.workbook_root) !== normalizeRuntimePath(expectedWorkbookRoot)
+    normalizeRuntimePath(health.workbook_root) !== normalizeRuntimePath(expectedWorkbookRoot) ||
+    normalizeRuntimePath(health.history_root) !== normalizeRuntimePath(expectedHistoryRoot)
   ) {
     throw new ApiError('後端隔離環境識別不符，已拒絕存取', 503)
   }
@@ -62,7 +84,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   await verifyRuntimeIdentity(init?.signal ?? undefined)
   const response = await fetch(path, init)
   if (!response.ok) {
-    const message = response.status === 409 ? '儲存衝突' : '文件操作失敗'
+    let detail = ''
+    try { detail = String((await response.json() as { detail?: unknown }).detail ?? '') } catch { /* no JSON detail */ }
+    const message = detail || (response.status === 409 ? '儲存衝突' : '文件操作失敗')
     throw new ApiError(message, response.status)
   }
   return (response.status === 204 ? undefined : await response.json()) as T
@@ -129,4 +153,32 @@ export function renameWorkbook(
 
 export function deleteWorkbook(id: string): Promise<void> {
   return api(`/api/workbooks/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function listWorkbookVersions(id: string): Promise<WorkbookVersion[]> {
+  return api(`/api/workbooks/${encodeURIComponent(id)}/versions`)
+}
+
+export function createWorkbookVersion(
+  id: string,
+  expectedRevision: number,
+  label: string | null,
+): Promise<WorkbookVersion> {
+  return api(`/api/workbooks/${encodeURIComponent(id)}/versions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expected_revision: expectedRevision, label }),
+  })
+}
+
+export function restoreWorkbookVersion(
+  id: string,
+  versionId: string,
+  expectedRevision: number,
+): Promise<WorkbookRestoreResult> {
+  return api(`/api/workbooks/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expected_revision: expectedRevision }),
+  })
 }

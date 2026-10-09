@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response, status
 
 from app.database import connect, resolve_runtime_identity
-from app.models import WorkbookRecord
+from app.models import WorkbookRecord, WorkbookVersionRecord
 from app.schemas import (
     HealthResponse,
     NativeWorkbookDocument,
@@ -18,12 +18,18 @@ from app.schemas import (
     WorkbookSummary,
     WorkbookStorageStatusResponse,
     WorkbookWriteRequest,
+    WorkbookRestoreResponse,
+    WorkbookVersionCreateRequest,
+    WorkbookVersionRestoreRequest,
+    WorkbookVersionResponse,
 )
+from app.services.history_storage import HistoryIntegrityError, HistorySnapshotTooLargeError, HistoryStorageError
 from app.services.native_workbook_storage import NativeWorkbookError
 from app.services.workbook_store import (
     NativeWorkbookCollisionError,
     WorkbookConflictError,
     WorkbookStore,
+    VersionNotFoundError,
 )
 
 CANONICAL_WORKBOOK_ID = "default"
@@ -50,14 +56,46 @@ def _summary(record: WorkbookRecord) -> WorkbookSummary:
     )
 
 
+def _version_response(record: WorkbookVersionRecord) -> WorkbookVersionResponse:
+    snapshot = record.snapshot or {}
+    sheets = snapshot.get("sheets") if isinstance(snapshot, dict) else None
+    order = snapshot.get("sheetOrder") if isinstance(snapshot, dict) else None
+    worksheet_names: list[str] = []
+    populated = 0
+    if isinstance(sheets, dict) and isinstance(order, list):
+        for sheet_id in order:
+            sheet = sheets.get(sheet_id)
+            if not isinstance(sheet, dict):
+                continue
+            worksheet_names.append(str(sheet.get("name", sheet_id)))
+            cell_data = sheet.get("cellData", {})
+            if isinstance(cell_data, dict):
+                populated += sum(len(row) for row in cell_data.values() if isinstance(row, dict))
+    return WorkbookVersionResponse(
+        version_id=record.version_id,
+        workbook_id=record.workbook_id,
+        source_revision=record.source_revision,
+        created_at=record.created_at,
+        source_type=record.source_type,  # type: ignore[arg-type]
+        label=record.label,
+        snapshot_sha256=record.snapshot_sha256,
+        worksheet_count=len(worksheet_names),
+        worksheet_names=worksheet_names,
+        populated_cell_count=populated,
+        integrity="corrupt" if record.integrity == "corrupt" else "ok",
+    )
+
+
 def create_app(
     database_path: str | Path | None = None,
     workbook_root: str | Path | None = None,
+    history_root: str | Path | None = None,
 ) -> FastAPI:
-    runtime_identity = resolve_runtime_identity(database_path, workbook_root)
+    runtime_identity = resolve_runtime_identity(database_path, workbook_root, history_root)
     resolved_database_path = runtime_identity.database_path
     resolved_workbook_root = runtime_identity.workbook_root
-    store = WorkbookStore(resolved_database_path, resolved_workbook_root)
+    resolved_history_root = runtime_identity.history_root
+    store = WorkbookStore(resolved_database_path, resolved_workbook_root, resolved_history_root)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -65,6 +103,7 @@ def create_app(
         app.state.workbook_store = store
         app.state.database_path = resolved_database_path
         app.state.workbook_root = resolved_workbook_root
+        app.state.history_root = resolved_history_root
         yield
 
     application = FastAPI(title="Tiger Web Sheets API", version="1.0.0", lifespan=lifespan)
@@ -88,6 +127,7 @@ def create_app(
             runtime_mode=runtime_identity.mode,
             database_path=str(runtime_identity.database_path),
             workbook_root=str(runtime_identity.workbook_root),
+            history_root=str(runtime_identity.history_root),
             instance_nonce=runtime_identity.instance_nonce,
         )
 
@@ -212,6 +252,68 @@ def create_app(
         if record is None:
             raise HTTPException(status_code=404, detail="workbook not found")
         return _response(record)
+
+    @application.get(
+        "/api/workbooks/{workbook_id}/versions",
+        response_model=list[WorkbookVersionResponse],
+    )
+    def list_workbook_versions(
+        workbook_id: str, request: Request
+    ) -> list[WorkbookVersionResponse]:
+        try:
+            return [_version_response(item) for item in request.app.state.workbook_store.list_versions(workbook_id)]
+        except VersionNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (sqlite3.Error, OSError, HistoryStorageError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="version history unavailable") from error
+
+    @application.post(
+        "/api/workbooks/{workbook_id}/versions",
+        response_model=WorkbookVersionResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_workbook_version(
+        workbook_id: str, payload: WorkbookVersionCreateRequest, request: Request
+    ) -> WorkbookVersionResponse:
+        try:
+            version = request.app.state.workbook_store.create_version(
+                workbook_id, payload.expected_revision, payload.label
+            )
+        except VersionNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except WorkbookConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except HistorySnapshotTooLargeError as error:
+            raise HTTPException(status_code=413, detail=str(error)) from error
+        except (sqlite3.Error, OSError, NativeWorkbookError, HistoryStorageError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="version creation failed") from error
+        return _version_response(version)
+
+    @application.post(
+        "/api/workbooks/{workbook_id}/versions/{version_id}/restore",
+        response_model=WorkbookRestoreResponse,
+    )
+    def restore_workbook_version(
+        workbook_id: str,
+        version_id: str,
+        payload: WorkbookVersionRestoreRequest,
+        request: Request,
+    ) -> WorkbookRestoreResponse:
+        try:
+            record, safety = request.app.state.workbook_store.restore_version(
+                workbook_id, version_id, payload.expected_revision
+            )
+        except VersionNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except WorkbookConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except HistoryIntegrityError as error:
+            raise HTTPException(status_code=422, detail="版本資料損毀") from error
+        except (sqlite3.Error, OSError, NativeWorkbookError, HistoryStorageError, ValueError, TypeError) as error:
+            raise HTTPException(status_code=503, detail="version restore failed") from error
+        return WorkbookRestoreResponse(
+            workbook=_response(record), safety_version=_version_response(safety)
+        )
 
     @application.delete(
         "/api/workbooks/{workbook_id}", status_code=status.HTTP_204_NO_CONTENT

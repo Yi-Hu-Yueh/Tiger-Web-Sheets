@@ -12,6 +12,7 @@ class HealthResponse(BaseModel):
     runtime_mode: str
     database_path: str
     workbook_root: str
+    history_root: str
     instance_nonce: str | None = None
 
 
@@ -113,3 +114,46 @@ class WorkbookResponse(BaseModel):
     revision: int
     created_at: datetime
     updated_at: datetime
+
+
+VersionSource = Literal["manual", "autosave", "pre_restore", "restore"]
+
+
+class WorkbookVersionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+    label: str | None = Field(default=None, max_length=200)
+
+    @field_validator("label")
+    @classmethod
+    def normalize_label(cls, label: str | None) -> str | None:
+        if label is None:
+            return None
+        normalized = label.strip()
+        return normalized or None
+
+
+class WorkbookVersionRestoreRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+
+
+class WorkbookVersionResponse(BaseModel):
+    version_id: str
+    workbook_id: str
+    source_revision: int
+    created_at: datetime
+    source_type: VersionSource
+    label: str | None
+    snapshot_sha256: str
+    worksheet_count: int
+    worksheet_names: list[str]
+    populated_cell_count: int
+    integrity: Literal["ok", "corrupt"]
+
+
+class WorkbookRestoreResponse(BaseModel):
+    workbook: WorkbookResponse
+    safety_version: WorkbookVersionResponse

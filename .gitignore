@@ -12,4 +12,7 @@ data/*.db-*
 workbooks/*.tws.json
 workbooks/*.tmp
 workbooks/*.bak
+history/*/
+history/*.tmp
+history/*.bak
 

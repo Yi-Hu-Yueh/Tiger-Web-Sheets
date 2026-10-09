@@ -14,6 +14,7 @@
     "validate:phase1g-xlsx": "node scripts/phase1g-xlsx-check.mjs",
     "validate:phase1h-autosave": "node scripts/phase1h-autosave-check.mjs",
     "validate:phase1i-rules": "node scripts/phase1i-rules-check.mjs",
+    "validate:phase1j-history": "node scripts/phase1j-history-check.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

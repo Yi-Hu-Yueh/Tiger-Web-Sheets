@@ -1,6 +1,6 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and a project-local SQLite database with manual Save, debounced autosave, local crash recovery, and optimistic-revision semantics. Phase 1I adds native data validation, dropdown lists, and conditional formatting. Phase 1I technical validation: **PASS**. Owner runtime acceptance: **PASS**, confirmed by the owner on 2026-10-09. Phase 1I final status: **PASS**. The earlier Codex browser-helper failure is historical and is not an outstanding closure gate.
+Tiger Web Sheets is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and project-local durable storage with manual Save, debounced autosave, crash recovery, optimistic revisions, and persistent version history. Phase 1J adds immutable named/automatic versions and safe restore. Phase 1J technical validation is documented in [docs/PHASE1J_VERSION_HISTORY.md](docs/PHASE1J_VERSION_HISTORY.md); owner runtime acceptance remains **HUMAN_RUNTIME_TEST_REQUIRED**.
 
 ## Architecture
 
@@ -10,11 +10,13 @@ Tiger Web Sheets is a persistent local workbook manager and browser spreadsheet.
 - Backend: FastAPI 0.128.2 on Python 3.11.3
 - Storage: SQLite plus an atomic native `.tws.json` mirror for every committed workbook
 - Recovery: bounded browser-local IndexedDB checkpoints; only the autosave setting uses localStorage
+- Version history: SQLite metadata plus immutable full-snapshot files under `history\<workbook-id>\<version-id>.tws.json`
 - Stored format: complete Tiger-Web-Sheets/Univer workbook snapshot JSON, not an XLSX file
 - Frontend URL: <http://127.0.0.1:5173/>
 - Backend health URL: <http://127.0.0.1:18085/api/health>
 - SQLite file: `data\tiger_web_sheets.db`
 - Native workbook directory: `workbooks\`
+- Native history directory: `history\`
 
 Port 18083 was already occupied during implementation, so this project uses backend port 18085. Vite proxies `/api` to that port.
 
@@ -46,7 +48,7 @@ scripts\start_frontend.cmd
 
 ## Isolated destructive runtime tests
 
-Automated browser or API tests that write workbook data must use the fail-closed isolated launcher. The launcher requires explicit non-manual ports, an explicit database and workbook-file root under `.cache`, and a per-run nonce. It refuses `data\tiger_web_sheets.db` and the manual `workbooks` directory, refuses the normal ports `18085` and `5173`, fails if either requested port is occupied, verifies the backend-reported paths and nonce, and only then starts the isolated frontend.
+Automated browser or API tests that write workbook data must use the fail-closed isolated launcher. The launcher requires explicit non-manual ports, database, workbook-file root, history root under `.cache`, and a per-run nonce. It refuses `data\tiger_web_sheets.db`, manual `workbooks`, and manual `history`, refuses ports `18085`/`5173`, fails if either requested port is occupied, verifies every backend-reported path and nonce, and only then starts the isolated frontend.
 
 ```powershell
 $nonce = [guid]::NewGuid().ToString('N')
@@ -55,6 +57,7 @@ $nonce = [guid]::NewGuid().ToString('N')
   -FrontendPort 5185 `
   -DatabasePath ".cache\isolated-runtimes\$nonce\workbook.db" `
   -WorkbookRoot ".cache\isolated-runtimes\$nonce\workbooks" `
+  -HistoryRoot ".cache\isolated-runtimes\$nonce\history" `
   -InstanceNonce $nonce
 ```
 
@@ -97,6 +100,12 @@ Run `npm --prefix frontend run validate:phase1i-rules` for deterministic native-
 - `儲存衝突`: the browser revision is stale; the application does not overwrite the newer stored snapshot
 
 On startup, the application shows the workbook list. Opening a document loads that exact record and revision. If the backend is unavailable, the app shows a backend error instead of claiming that data is saved.
+
+## Phase 1J version history
+
+**版本紀錄** lists workbook-ID-scoped committed snapshots with time, source, source revision, label, worksheet names/count, and populated-cell count. **建立版本** creates an immutable permanent version with an optional label; dirty work is saved first. Normal changed commits create at most one automatic version per ten minutes. Only the latest 20 automatic versions are retained; manual named and pre-restore safety versions are never automatically pruned.
+
+**還原此版本** validates the selected history file, saves any dirty current state, creates a **還原前備份**, and commits the selected complete snapshot as a new current revision. Revision numbers always advance. Restore pauses autosave, follows the bound external `.tws.json` write/permission semantics, clears obsolete crash-recovery data after a committed restore, and reconstructs the workbook. Save As gets a new workbook ID and only its own initial automatic history; rename keeps history; workbook deletion removes only that workbook's metadata and history directory. CSV/XLSX never carry Tiger history.
 
 ## Phase 1E workbook management
 
@@ -199,6 +208,9 @@ Detailed evidence, exact sort orders, filter persistence semantics, the formula-
 - `GET /api/workbooks/{workbook_id}/storage`
 - `GET /api/workbooks/{workbook_id}/native`
 - `POST /api/native-files/import`
+- `GET /api/workbooks/{workbook_id}/versions`
+- `POST /api/workbooks/{workbook_id}/versions`
+- `POST /api/workbooks/{workbook_id}/versions/{version_id}/restore`
 
 POST creates a collision-resistant UUID record and never overwrites an existing document. PUT contains the complete Univer snapshot and `expected_revision`; PATCH renames metadata without changing snapshot contents or identity. Committed saves and renames increment that workbook's revision. A stale expected revision returns HTTP 409. Existing `default` records are listed and opened normally and remain compatible with the legacy first-save PUT path.
 
@@ -234,7 +246,8 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 - Stored documents are Univer snapshot JSON in SQLite plus `.tws.json` mirrors, not XLSX workbooks.
 - Data validation and conditional formatting are limited to the tested Phase 1I first-version rules; advanced Excel parity, advanced conditional-format types, and overlap/priority behavior are not certified. Native `.tws.json` is authoritative for rules. CSV does not preserve them, and XLSX warns rather than claiming certified rule round-trip.
 - Phase 1C structural formula-reference rewriting remains **PARTIAL**.
-- Charts, pivot tables, printing, PDF export, and version history are not implemented.
+- Version history stores full snapshots rather than cell-level diffs. It has no visual diff, branching, comments, collaboration, cloud backup, or individual-version delete UI. The 16 MiB per-history-snapshot ceiling and 20-automatic-version retention are first-version limits; manual/pre-restore versions require owner-managed disk capacity.
+- Charts, pivot tables, printing, and PDF export are not implemented.
 - Authentication, collaboration, AI, and cloud deployment are not implemented.
 - Excel compatibility is not claimed beyond the behavior explicitly tested with Univer 1.0.3.
 

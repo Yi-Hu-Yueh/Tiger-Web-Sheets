@@ -33,6 +33,7 @@ def test_health_endpoint(client: TestClient) -> None:
         "runtime_mode": "manual",
         "database_path": str(client.app.state.database_path),
         "workbook_root": str(client.app.state.workbook_root),
+        "history_root": str(client.app.state.history_root),
         "instance_nonce": None,
     }
 
@@ -49,6 +50,7 @@ def test_isolated_runtime_health_exposes_verified_identity(
             "runtime_mode": "isolated-test",
             "database_path": str(database_path.resolve()),
             "workbook_root": str(workbook_root.resolve()),
+            "history_root": str((workbook_root.parent / "history").resolve()),
             "instance_nonce": "test-nonce",
         }
 
@@ -111,6 +113,33 @@ def test_isolated_runtime_requires_environment_workbook_root_under_cache(
         "TIGER_WEB_SHEETS_WORKBOOK_ROOT", str(tmp_path / "outside-workbooks")
     )
     with pytest.raises(RuntimeError, match="workbook root must be located under"):
+        create_app()
+
+
+def test_isolated_runtime_requires_explicit_history_root(monkeypatch) -> None:
+    from app.database import ISOLATED_ROOT
+
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_DB", str(ISOLATED_ROOT / "history-guard" / "workbook.db"))
+    monkeypatch.setenv("TIGER_WEB_SHEETS_WORKBOOK_ROOT", str(ISOLATED_ROOT / "history-guard" / "workbooks"))
+    monkeypatch.delenv("TIGER_WEB_SHEETS_HISTORY_ROOT", raising=False)
+    with pytest.raises(RuntimeError, match="explicit TIGER_WEB_SHEETS_HISTORY_ROOT"):
+        create_app()
+
+
+def test_isolated_runtime_refuses_manual_and_outside_history_roots(monkeypatch, tmp_path: Path) -> None:
+    from app.database import DEFAULT_HISTORY_ROOT, ISOLATED_ROOT
+
+    monkeypatch.setenv("TIGER_WEB_SHEETS_RUNTIME", "isolated-test")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_INSTANCE_NONCE", "test-nonce")
+    monkeypatch.setenv("TIGER_WEB_SHEETS_DB", str(ISOLATED_ROOT / "history-guard" / "workbook.db"))
+    monkeypatch.setenv("TIGER_WEB_SHEETS_WORKBOOK_ROOT", str(ISOLATED_ROOT / "history-guard" / "workbooks"))
+    monkeypatch.setenv("TIGER_WEB_SHEETS_HISTORY_ROOT", str(DEFAULT_HISTORY_ROOT))
+    with pytest.raises(RuntimeError, match="refuses the manual history root"):
+        create_app()
+    monkeypatch.setenv("TIGER_WEB_SHEETS_HISTORY_ROOT", str(tmp_path / "outside-history"))
+    with pytest.raises(RuntimeError, match="history root must be located under"):
         create_app()
 
 

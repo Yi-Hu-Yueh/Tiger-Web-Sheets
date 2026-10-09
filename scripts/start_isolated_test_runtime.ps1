@@ -17,6 +17,10 @@ param(
     [string] $WorkbookRoot,
 
     [Parameter(Mandatory)]
+    [ValidateNotNullOrEmpty()]
+    [string] $HistoryRoot,
+
+    [Parameter(Mandatory)]
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
     [string] $InstanceNonce
 )
@@ -35,6 +39,9 @@ $canonicalDatabase = [System.IO.Path]::GetFullPath(
 $canonicalWorkbookRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $projectRoot 'workbooks')
 )
+$canonicalHistoryRoot = [System.IO.Path]::GetFullPath(
+    (Join-Path $projectRoot 'history')
+)
 $isolatedRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot '.cache'))
 $resolvedDatabase = if ([System.IO.Path]::IsPathRooted($DatabasePath)) {
     [System.IO.Path]::GetFullPath($DatabasePath)
@@ -45,6 +52,11 @@ $resolvedWorkbookRoot = if ([System.IO.Path]::IsPathRooted($WorkbookRoot)) {
     [System.IO.Path]::GetFullPath($WorkbookRoot)
 } else {
     [System.IO.Path]::GetFullPath((Join-Path $projectRoot $WorkbookRoot))
+}
+$resolvedHistoryRoot = if ([System.IO.Path]::IsPathRooted($HistoryRoot)) {
+    [System.IO.Path]::GetFullPath($HistoryRoot)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $projectRoot $HistoryRoot))
 }
 
 if ($BackendPort -in @(18085, 5173) -or $FrontendPort -in @(18085, 5173)) {
@@ -62,6 +74,12 @@ if ($resolvedWorkbookRoot.Equals(
 )) {
     throw 'Isolated tests refuse the manual workbooks directory.'
 }
+if ($resolvedHistoryRoot.Equals(
+    $canonicalHistoryRoot,
+    [System.StringComparison]::OrdinalIgnoreCase
+)) {
+    throw 'Isolated tests refuse the manual history directory.'
+}
 $isolatedPrefix = $isolatedRoot.TrimEnd('\') + '\'
 if (-not $resolvedDatabase.StartsWith(
     $isolatedPrefix,
@@ -74,6 +92,12 @@ if (-not $resolvedWorkbookRoot.StartsWith(
     [System.StringComparison]::OrdinalIgnoreCase
 )) {
     throw 'The isolated workbook root must be located under the project .cache directory.'
+}
+if (-not $resolvedHistoryRoot.StartsWith(
+    $isolatedPrefix,
+    [System.StringComparison]::OrdinalIgnoreCase
+)) {
+    throw 'The isolated history root must be located under the project .cache directory.'
 }
 if (-not (Test-Path -LiteralPath $pythonExecutable -PathType Leaf)) {
     throw "Python was not found at $pythonExecutable"
@@ -107,6 +131,7 @@ $databaseDirectory = Split-Path -Parent $resolvedDatabase
 New-Item -ItemType Directory -Path $runtimeDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $databaseDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $resolvedWorkbookRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $resolvedHistoryRoot -Force | Out-Null
 
 $backendOut = Join-Path $runtimeDirectory 'backend.out.log'
 $backendErr = Join-Path $runtimeDirectory 'backend.err.log'
@@ -132,6 +157,7 @@ try {
             TIGER_WEB_SHEETS_DB = $resolvedDatabase
             TIGER_WEB_SHEETS_RUNTIME = 'isolated-test'
             TIGER_WEB_SHEETS_WORKBOOK_ROOT = $resolvedWorkbookRoot
+            TIGER_WEB_SHEETS_HISTORY_ROOT = $resolvedHistoryRoot
             TIGER_WEB_SHEETS_INSTANCE_NONCE = $InstanceNonce
         }
         PassThru = $true
@@ -164,6 +190,10 @@ try {
         -not $health.workbook_root.Equals(
             $resolvedWorkbookRoot,
             [System.StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not $health.history_root.Equals(
+            $resolvedHistoryRoot,
+            [System.StringComparison]::OrdinalIgnoreCase
         )
     ) {
         throw 'The isolated backend identity did not match the requested database, workbook root, and nonce.'
@@ -184,6 +214,7 @@ try {
             VITE_TIGER_RUNTIME_MODE = 'isolated-test'
             VITE_TIGER_DATABASE_PATH = $resolvedDatabase
             VITE_TIGER_WORKBOOK_ROOT = $resolvedWorkbookRoot
+            VITE_TIGER_HISTORY_ROOT = $resolvedHistoryRoot
             VITE_TIGER_INSTANCE_NONCE = $InstanceNonce
         }
         PassThru = $true
@@ -214,6 +245,7 @@ try {
         instance_nonce = $InstanceNonce
         database_path = $resolvedDatabase
         workbook_root = $resolvedWorkbookRoot
+        history_root = $resolvedHistoryRoot
         backend_port = $BackendPort
         backend_pid = $backendProcess.Id
         backend_url = $backendUrl

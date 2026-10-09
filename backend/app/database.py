@@ -8,6 +8,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_PATH = PROJECT_ROOT / "data" / "tiger_web_sheets.db"
 DEFAULT_WORKBOOK_ROOT = PROJECT_ROOT / "workbooks"
+DEFAULT_HISTORY_ROOT = PROJECT_ROOT / "history"
 ISOLATED_ROOT = PROJECT_ROOT / ".cache"
 ISOLATED_TEST_RUNTIME = "isolated-test"
 
@@ -17,6 +18,7 @@ class RuntimeIdentity:
     mode: str
     database_path: Path
     workbook_root: Path
+    history_root: Path
     instance_nonce: str | None
 
 
@@ -35,12 +37,30 @@ def resolve_workbook_root(workbook_root: str | Path | None = None) -> Path:
     return Path(configured).resolve() if configured else DEFAULT_WORKBOOK_ROOT.resolve()
 
 
+def resolve_history_root(
+    history_root: str | Path | None = None,
+    workbook_root: str | Path | None = None,
+) -> Path:
+    if history_root is not None:
+        return Path(history_root).resolve()
+    configured = os.environ.get("TIGER_WEB_SHEETS_HISTORY_ROOT")
+    if configured:
+        return Path(configured).resolve()
+    # Programmatic test apps already pass an isolated workbook root. Keep their
+    # history beside it rather than ever falling back to owner history.
+    if workbook_root is not None:
+        return Path(workbook_root).resolve().parent / "history"
+    return DEFAULT_HISTORY_ROOT.resolve()
+
+
 def resolve_runtime_identity(
     database_path: str | Path | None = None,
     workbook_root: str | Path | None = None,
+    history_root: str | Path | None = None,
 ) -> RuntimeIdentity:
     resolved_database_path = resolve_database_path(database_path)
     resolved_workbook_root = resolve_workbook_root(workbook_root)
+    resolved_history_root = resolve_history_root(history_root, workbook_root)
     mode = os.environ.get("TIGER_WEB_SHEETS_RUNTIME", "manual").strip() or "manual"
     instance_nonce = os.environ.get("TIGER_WEB_SHEETS_INSTANCE_NONCE")
 
@@ -71,11 +91,23 @@ def resolve_runtime_identity(
                 ) from error
         if not instance_nonce or not instance_nonce.strip():
             raise RuntimeError("isolated-test runtime requires TIGER_WEB_SHEETS_INSTANCE_NONCE")
+        if history_root is None and workbook_root is None and not os.environ.get("TIGER_WEB_SHEETS_HISTORY_ROOT"):
+            raise RuntimeError("isolated-test runtime requires explicit TIGER_WEB_SHEETS_HISTORY_ROOT")
+        if resolved_history_root == DEFAULT_HISTORY_ROOT.resolve():
+            raise RuntimeError("isolated-test runtime refuses the manual history root")
+        if history_root is None and workbook_root is None:
+            try:
+                resolved_history_root.relative_to(ISOLATED_ROOT.resolve())
+            except ValueError as error:
+                raise RuntimeError(
+                    "isolated-test history root must be located under the project .cache directory"
+                ) from error
 
     return RuntimeIdentity(
         mode=mode,
         database_path=resolved_database_path,
         workbook_root=resolved_workbook_root,
+        history_root=resolved_history_root,
         instance_nonce=instance_nonce,
     )
 
@@ -103,6 +135,29 @@ def initialize_database(database_path: Path) -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workbook_versions (
+                version_id TEXT PRIMARY KEY,
+                workbook_id TEXT NOT NULL,
+                source_revision INTEGER NOT NULL CHECK (source_revision >= 1),
+                created_at TEXT NOT NULL,
+                source_type TEXT NOT NULL CHECK (
+                    source_type IN ('manual', 'autosave', 'pre_restore', 'restore')
+                ),
+                label TEXT,
+                snapshot_sha256 TEXT NOT NULL,
+                native_file_name TEXT NOT NULL,
+                FOREIGN KEY (workbook_id) REFERENCES workbooks(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS workbook_versions_workbook_created
+            ON workbook_versions(workbook_id, created_at DESC, version_id DESC)
             """
         )
         connection.commit()

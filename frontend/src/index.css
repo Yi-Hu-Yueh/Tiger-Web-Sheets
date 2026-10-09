@@ -578,3 +578,19 @@ dialog.xlsx-dialog::backdrop { background: rgb(15 23 42 / 45%); }
 dialog.xlsx-dialog button { margin: 8px; padding: 8px 14px; }
 dialog.xlsx-dialog li { margin: 8px 0; }
 .autosave-control { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 13px; }
+.history-dialog { width: min(820px, 95vw); max-height: 84vh; overflow: auto; }
+.history-heading { display: flex; justify-content: space-between; gap: 16px; }
+.history-toolbar { display: flex; gap: 8px; margin-top: 18px; }
+.history-layout { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(280px, 1fr); gap: 16px; margin-top: 16px; }
+.history-list { display: grid; align-content: start; gap: 8px; max-height: 430px; overflow: auto; }
+.history-item { display: grid; gap: 4px; width: 100%; border: 1px solid #ccd9d0; border-radius: 8px; padding: 10px 12px; text-align: left; color: #263c30; background: #fff; cursor: pointer; }
+.history-item span { color: #657169; font-size: 12px; }
+.history-item--selected { border-color: #176b3a; background: #edf7f1; }
+.history-preview { min-height: 210px; border: 1px solid #d5dfd8; border-radius: 8px; padding: 16px; }
+.history-preview h3 { margin: 0; }
+.history-preview dl { display: grid; grid-template-columns: 82px 1fr; gap: 8px; margin: 16px 0; font-size: 13px; }
+.history-preview dt { color: #647168; }
+.history-preview dd { margin: 0; overflow-wrap: anywhere; }
+.history-warning { color: #8a4b08 !important; }
+.history-confirm-backdrop { z-index: 110; }
+@media (max-width: 680px) { .history-layout { grid-template-columns: 1fr; } }

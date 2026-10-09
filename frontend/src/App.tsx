@@ -27,6 +27,7 @@ import { recalculateXlsx } from './xlsx/xlsxRecalculation'
 import { AutosaveCoordinator } from './persistence/autosaveCoordinator'
 import { recoveryStore, recoveryDisposition, type RecoveryCheckpoint } from './persistence/recoveryStore'
 import RecoveryDialog from './persistence/RecoveryDialog'
+import { RestoreVersionDialog, VersionHistoryDialog, VersionLabelDialog } from './history/VersionHistoryDialogs'
 import {
   CsvImportPreviewDialog,
   CsvWorksheetDialog,
@@ -70,16 +71,20 @@ import {
 } from './files/nativeFileAccess'
 import {
   ApiError,
+  createWorkbookVersion,
   createWorkbook,
   deleteWorkbook,
   importNativeWorkbook,
   listWorkbooks,
   loadNativeDocument,
   loadWorkbook,
+  listWorkbookVersions,
   renameWorkbook,
   saveWorkbook,
+  restoreWorkbookVersion,
   type PersistedWorkbook,
   type WorkbookSummary,
+  type WorkbookVersion,
 } from './workbookApi'
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-filter/lib/index.css'
@@ -166,6 +171,7 @@ function App() {
   const currentWorkbookRef = useRef<PersistedWorkbook | null>(null)
   const changeGenerationRef = useRef(0)
   const savingRef = useRef(false)
+  const restoreActiveRef = useRef(false)
   const autosaveRef = useRef<AutosaveCoordinator | null>(null)
   const persistRef = useRef<() => Promise<{ ok: boolean; generation: number }>>(async () => ({ ok: false, generation: -1 }))
   const checkpointRef = useRef<() => Promise<void>>(async () => {})
@@ -192,6 +198,7 @@ function App() {
   } | null>(null)
   const [status, setStatus] = useState<SaveStatus>('loading')
   const [saveActive, setSaveActive] = useState(false)
+  const [restoreBusy, setRestoreBusy] = useState(false)
   const [loadMessage, setLoadMessage] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
   const [safeSortSelection, setSafeSortSelection] = useState<SafeSortSelection | null>(null)
@@ -237,6 +244,12 @@ function App() {
   })
   const [recoveryWarning, setRecoveryWarning] = useState('')
   const [recoveryPrompt, setRecoveryPrompt] = useState<{ committed: PersistedWorkbook; record: RecoveryCheckpoint; conflict: boolean } | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyVersions, setHistoryVersions] = useState<WorkbookVersion[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [versionLabelOpen, setVersionLabelOpen] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<WorkbookVersion | null>(null)
   const [pendingNavigation, setPendingNavigation] = useState<'home' | 'new' | 'open-local' | 'import-csv' | 'import-xlsx' | null>(null)
 
   const xlsx = useXlsx({
@@ -375,7 +388,7 @@ function App() {
       checkpointRef.current = checkpoint
       const coordinator = new AutosaveCoordinator({
         generation: () => changeGenerationRef.current,
-        eligible: () => readyRef.current && autosaveEnabledRef.current && !!boundFileHandleRef.current && revisionRef.current > 0 && !fileInteractionRef.current && !autosaveHoldRef.current,
+        eligible: () => readyRef.current && autosaveEnabledRef.current && !!boundFileHandleRef.current && revisionRef.current > 0 && !fileInteractionRef.current && !autosaveHoldRef.current && !restoreActiveRef.current,
         save: () => persistRef.current(), checkpoint,
         recoveryError: (error) => { if (!disposed) setRecoveryWarning(error instanceof Error ? error.message : '本機復原寫入失敗，請手動儲存。') },
       })
@@ -564,10 +577,10 @@ function App() {
     else autosaveRef.current?.suspend()
   }, [autosaveEnabled])
   useEffect(() => {
-    autosaveHoldRef.current = !!pendingNavigation || !!nameDialog || csvPending || xlsx.busy || documentActionPending
+    autosaveHoldRef.current = !!pendingNavigation || !!nameDialog || csvPending || xlsx.busy || documentActionPending || !!restoreTarget
     if (autosaveHoldRef.current) autosaveRef.current?.suspend()
     else autosaveRef.current?.resume()
-  }, [pendingNavigation, nameDialog, csvPending, xlsx.busy, documentActionPending])
+  }, [pendingNavigation, nameDialog, csvPending, xlsx.busy, documentActionPending, restoreTarget])
 
   // Pickers/reauthorization are entered only by a Save click, never by a timer.
   const save = useCallback((): Promise<boolean> => {
@@ -596,6 +609,91 @@ function App() {
   }, [rememberBoundHandle])
 
   const isDirty = saveActive || status === 'saving' || status === 'unsaved' || status === 'failed' || status === 'conflict' || status === 'external-failed' || status === 'sync-failed' || status === 'permission-required' || status === 'unsupported'
+
+  const refreshHistory = useCallback(async () => {
+    const current = currentWorkbookRef.current
+    if (!current) return
+    setHistoryLoading(true)
+    setHistoryError('')
+    try { setHistoryVersions(await listWorkbookVersions(current.id)) }
+    catch (error) { setHistoryError(error instanceof Error ? error.message : '無法載入版本紀錄。') }
+    finally { setHistoryLoading(false) }
+  }, [])
+
+  const openHistory = useCallback(() => {
+    setHistoryOpen(true)
+    void refreshHistory()
+  }, [refreshHistory])
+
+  const confirmCreateVersion = useCallback(async (label: string | null) => {
+    if (documentActionPending) return
+    setDocumentActionPending(true)
+    setHistoryError('')
+    try {
+      if (isDirty && !await save()) throw new Error('目前變更尚未成功儲存，因此沒有建立版本。')
+      const current = currentWorkbookRef.current
+      if (!current) throw new Error('找不到目前活頁簿。')
+      await createWorkbookVersion(current.id, revisionRef.current, label)
+      setVersionLabelOpen(false)
+      setHistoryOpen(true)
+      setLoadMessage(label ? `已建立版本「${label}」。` : '已建立手動版本。')
+      setHistoryVersions(await listWorkbookVersions(current.id))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '無法建立版本。'
+      setHistoryError(message); setLoadMessage(message)
+    } finally { setDocumentActionPending(false) }
+  }, [documentActionPending, isDirty, save])
+
+  const confirmRestoreVersion = useCallback(async () => {
+    const target = restoreTarget
+    if (!target || documentActionPending) return
+    setDocumentActionPending(true)
+    setHistoryError('')
+    restoreActiveRef.current = true
+    setRestoreBusy(true)
+    autosaveRef.current?.suspend()
+    try {
+      if (isDirty && !await save()) throw new Error('目前變更尚未成功儲存，因此沒有執行還原。')
+      const current = currentWorkbookRef.current
+      const handle = boundFileHandleRef.current
+      if (!current || !handle) throw new Error('還原前必須先完成目前活頁簿的本機儲存。')
+      savingRef.current = true
+      setSaveActive(true)
+      setStatus('saving')
+      const { committed: result } = await commitThenWriteNativeFile(
+        handle,
+        () => restoreWorkbookVersion(current.id, target.version_id, revisionRef.current),
+        (restored) => loadNativeDocument(restored.workbook.id),
+        true,
+      )
+      pendingExternalWriteRef.current = null
+      await recoveryStore.remove(current.id)
+      openingStatusRef.current = { workbookId: result.workbook.id, status: 'saved', message: `已還原版本${target.label ? `「${target.label}」` : ''}；還原前狀態已建立安全備份。` }
+      setRestoreTarget(null); setHistoryOpen(false)
+      setCurrentWorkbook(result.workbook)
+      setReloadToken((value) => value + 1)
+    } catch (error) {
+      if (error instanceof NativePersistenceError && error.committed) {
+        const result = error.committed as Awaited<ReturnType<typeof restoreWorkbookVersion>>
+        if (error.stage === 'external' && error.document) pendingExternalWriteRef.current = { workbookId: result.workbook.id, document: error.document, generation: 0 }
+        try { await recoveryStore.remove(result.workbook.id) } catch { setRecoveryWarning('還原已提交，但舊復原資料清理失敗；請勿用舊復原資料覆寫還原結果。') }
+        openingStatusRef.current = { workbookId: result.workbook.id, status: error.stage === 'external' ? 'external-failed' : 'sync-failed', message: `${error.message} 還原前安全備份已建立；請重試儲存完成同步。` }
+        setRestoreTarget(null); setHistoryOpen(false)
+        setCurrentWorkbook(result.workbook)
+        setReloadToken((value) => value + 1)
+      } else {
+        const message = error instanceof Error ? error.message : '版本還原失敗；目前版本未被取代。'
+        setHistoryError(message); setLoadMessage(message)
+      }
+    } finally {
+      savingRef.current = false
+      restoreActiveRef.current = false
+      setRestoreBusy(false)
+      setSaveActive(false)
+      setDocumentActionPending(false)
+      autosaveRef.current?.resume()
+    }
+  }, [documentActionPending, isDirty, restoreTarget, save])
 
   useEffect(() => {
     if (!isDirty) return
@@ -1271,6 +1369,8 @@ function App() {
           {xlsx.notice && <span role="status">{xlsx.notice}</span>}
           <button type="button" className="secondary-button compact-button" onClick={() => void saveAs()} disabled={!canSave || saveActive}>另存新檔</button>
           <button type="button" className="secondary-button compact-button" onClick={() => setNameDialog({ mode: 'rename', target: currentWorkbook })} disabled={saveActive}>重新命名</button>
+          <button type="button" className="secondary-button compact-button" onClick={openHistory} disabled={!canSave || saveActive}>版本紀錄</button>
+          <button type="button" className="secondary-button compact-button" onClick={() => setVersionLabelOpen(true)} disabled={!canSave || saveActive}>建立版本</button>
           {safeSortNotice && <span className="safe-sort-notice" role="status">{safeSortNotice}</span>}
           {filterNotice && <span className="filter-notice" role="status">{filterNotice}</span>}
           {filterError && <span className="filter-error" role="alert">{filterError}</span>}
@@ -1395,6 +1495,7 @@ function App() {
           </div>
         )}
         {status === 'loading' && <div className="state-panel">正在載入活頁簿…</div>}
+        {restoreBusy && <div className="state-panel" role="status">正在建立安全備份並還原版本…</div>}
         {status === 'load-error' && (
           <div className="state-panel state-panel--error" role="alert">
             <strong>無法連線至儲存服務</strong>
@@ -1474,6 +1575,10 @@ function App() {
     {recoveryPrompt && <RecoveryDialog conflict={recoveryPrompt.conflict} pending={documentActionPending}
       onRestore={() => void chooseRecovery(true)} onStored={() => void chooseRecovery(false)}
       onCancel={() => { setRecoveryPrompt(null); recoveryDecisionRef.current = null; openingStatusRef.current = null; setCurrentWorkbook(null); setHomeReloadToken((value) => value + 1) }} />}
+    {historyOpen && <VersionHistoryDialog versions={historyVersions} loading={historyLoading} pending={documentActionPending} error={historyError}
+      onRefresh={() => void refreshHistory()} onCreate={() => setVersionLabelOpen(true)} onRestore={setRestoreTarget} onClose={() => { setHistoryOpen(false); setHistoryError('') }} />}
+    {versionLabelOpen && <VersionLabelDialog dirty={isDirty} pending={documentActionPending} onConfirm={(label) => void confirmCreateVersion(label)} onCancel={() => setVersionLabelOpen(false)} />}
+    {restoreTarget && <RestoreVersionDialog version={restoreTarget} pending={documentActionPending} onConfirm={() => void confirmRestoreVersion()} onCancel={() => setRestoreTarget(null)} />}
     </>
   )
 }
