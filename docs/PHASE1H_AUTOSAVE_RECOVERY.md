@@ -1,6 +1,6 @@
 # Phase 1H — Autosave and crash recovery
 
-Technical implementation: **TECHNICAL_PASS** after the deterministic checks below. Desktop acceptance: **HUMAN_RUNTIME_TEST_REQUIRED**. No real-browser UI PASS is claimed: two isolated browser-helper attempts failed with `trusted Node process exited unexpectedly`. The normal shell runner also has `setup refresh had errors`; approved direct shell execution ran the technical checks.
+Technical implementation: **TECHNICAL_PASS** after the deterministic checks below. Desktop owner acceptance: **PASS** as part of final V1 acceptance. The original technical run did not claim a Codex-controlled real-browser UI PASS: two isolated browser-helper attempts failed with `trusted Node process exited unexpectedly`. The normal shell runner also had `setup refresh had errors`; approved direct shell execution ran the technical checks.
 
 ## Autosave and native persistence
 
@@ -71,7 +71,7 @@ Delete removes the deleted workbook's recovery record. Cleanup failure is visibl
 
 Reproduce from `frontend` with `npm run validate:phase1h-autosave`; the fake IndexedDB implementation is a pinned **test-only** dependency, not a production persistence fallback. The tests are not substituted for desktop UI/native-dialog acceptance.
 
-## Owner manual checkpoint — HUMAN_RUNTIME_TEST_REQUIRED
+## Owner manual checkpoint — PASS
 
 Use disposable workbooks/files; the owner decides PASS/FAIL. The backend stop/restart refers only to the intended disposable/manual acceptance service, not unrelated processes. Wait at least 500 ms and for a checkpoint transaction before deliberately testing recovery; immediate shutdown inside that window is not guaranteed.
 

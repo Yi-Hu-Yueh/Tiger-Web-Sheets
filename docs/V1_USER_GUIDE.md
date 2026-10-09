@@ -1,6 +1,6 @@
-# Tiger Web Sheets V1 Release Candidate User Guide
+# Tiger Web Sheets V1 User Guide
 
-Release candidate: **1.0.0-rc1**. This is eligible for owner acceptance; it is not the final `v1.0.0` release.
+Release: **1.0.0**. Owner V1 acceptance: **PASS**. This is the stable V1 release.
 
 ## Supported environment
 

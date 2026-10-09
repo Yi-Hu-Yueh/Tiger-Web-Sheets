@@ -1,10 +1,12 @@
 # Phase 1K — V1 Release Hardening and Acceptance
 
-Release candidate: **1.0.0-rc1**
+Release version: **1.0.0**
 
 Technical status: **TECHNICAL_PASS.**
 
-Owner status: **HUMAN_RUNTIME_TEST_REQUIRED.**
+Owner status: **PASS.**
+
+Release status: **stable V1.**
 
 Starting gate: `main`, `8eb2a1ec6207872c19a98a8f1da5e770936d6050`, clean.
 
@@ -14,25 +16,25 @@ Starting gate: `main`, `8eb2a1ec6207872c19a98a8f1da5e770936d6050`, clean.
 
 | Capability | Automated | Runtime | Owner | Known limitation | Release blocker |
 |---|---|---|---|---|---|
-| Startup, health, explicit manual identity, occupied-port refusal | PASS | PARTIAL | NOT_TESTED | Successful isolated start passed; existing unrelated/unhealthy listeners prevented a fresh normal-port start, and the launcher correctly refused them | No; owner gate pending |
-| Fresh database / workbook / history roots | PASS | PASS | NOT_TESTED | Browser rendering helper unavailable in this run | No; owner gate pending |
-| Workbook CRUD, revisions, conflict refusal, persistence | PASS | PASS | NOT_TESTED | Local single-user design | No |
-| Managed `.tws.json` atomic mirror and legacy reconstruction | PASS | PASS | NOT_TESTED | SQLite remains identity/current-state authority | No |
-| User-selected `.tws.json` synchronization | PASS | PASS (retained simulation) | NOT_TESTED | Desktop Chrome/Edge permission model | No; owner gate pending |
-| Core grid edits, formatting, merge/freeze, row/column/sheet operations | PASS | PASS (retained evidence) | PARTIAL | Owner-only Ctrl+X checkpoint remains | No; owner gate pending |
-| Formula baseline | PASS | PASS (retained evidence) | PARTIAL | Structural reference rewriting remains PARTIAL | No, documented boundary |
+| Startup, health, explicit manual identity, occupied-port refusal | PASS | PARTIAL | PASS | Successful isolated start passed; existing unrelated/unhealthy listeners prevented a fresh normal-port start, and the launcher correctly refused them | No |
+| Fresh database / workbook / history roots | PASS | PASS | PASS | Browser rendering helper unavailable in the technical run | No |
+| Workbook CRUD, revisions, conflict refusal, persistence | PASS | PASS | PASS | Local single-user design | No |
+| Managed `.tws.json` atomic mirror and legacy reconstruction | PASS | PASS | PASS | SQLite remains identity/current-state authority | No |
+| User-selected `.tws.json` synchronization | PASS | PASS (retained simulation) | PASS | Desktop Chrome/Edge permission model | No |
+| Core grid edits, formatting, merge/freeze, row/column/sheet operations | PASS | PASS (retained evidence) | PASS | Desktop Ctrl+X was manually accepted during Phase 1B | No |
+| Formula baseline | PASS | PASS (retained evidence) | PASS | Structural reference rewriting remains PARTIAL | No, documented boundary |
 | Safe Sort, Filter, Find, Replace | PASS | PASS | PASS | Safe Sort rejects formula-containing ranges | No |
-| CSV import/export | PASS | PASS (deterministic round trip) | NOT_TESTED | Values-only, one worksheet | No; owner gate pending |
+| CSV import/export | PASS | PASS (deterministic round trip) | PASS | Values-only, one worksheet | No |
 | XLSX bounded baseline | PASS | PASS | PASS | Not full Excel parity; rules not certified | No |
-| Autosave and browser-local recovery | PASS | PASS (coordinator/API) | NOT_TESTED | No shutdown-completion promise | No; owner gate pending |
+| Autosave and browser-local recovery | PASS | PASS (coordinator/API) | PASS | No shutdown-completion promise | No |
 | Validation and conditional formatting baseline | PASS | PASS | PASS | Advanced rules/STOP behavior not certified | No |
-| Persistent version history and safe restore | PASS | PASS | NOT_TESTED | Full snapshots; no diff/branch/delete-version UI | No; owner gate pending |
-| Save As and three-workbook isolation | PASS | PASS | NOT_TESTED | External handles remain browser-owned | No |
-| Failure containment / no false saved state | PASS | PASS (controlled paths) | NOT_TESTED | OS permission prompts require owner browser | No; owner gate pending |
-| Storage integrity / missing-corrupt detection | PASS | PASS | NOT_TESTED | Corrupt files are refused, not auto-reconstructed | No |
-| 1,000×20 persistence smoke | PASS | PASS | NOT_TESTED | Not a browser benchmark | No |
-| 10,000×20 persistence smoke | PASS | PASS | NOT_TESTED | Browser open/render unavailable in this run | No; owner gate pending |
-| 30-minute repeated-operation soak | PASS | PASS | NOT_TESTED | API save/list/reopen/version sequence, not interactive grid automation or memory-leak proof | No; owner gate pending |
+| Persistent version history and safe restore | PASS | PASS | PASS | Full snapshots; no visual diff/branching/merge or individual-version deletion UI | No |
+| Save As and three-workbook isolation | PASS | PASS | PASS | External handles remain browser-owned | No |
+| Failure containment / no false saved state | PASS | PASS (controlled paths) | PASS | OS permission prompts require owner browser | No |
+| Storage integrity / missing-corrupt detection | PASS | PASS | PASS | Corrupt files are refused, not auto-reconstructed | No |
+| 1,000×20 persistence smoke | PASS | PASS | PASS | Not a browser benchmark or enterprise-scale performance claim | No |
+| 10,000×20 persistence smoke | PASS | PASS | PASS | Technical browser open/render was unavailable; owner accepted the focused V1 workflow | No |
+| 30-minute repeated-operation soak | PASS | PASS | PASS | API save/list/reopen/version sequence, not interactive grid automation or memory-leak proof | No |
 
 ## Automated evidence
 
@@ -78,21 +80,21 @@ Starting gate: `main`, `8eb2a1ec6207872c19a98a8f1da5e770936d6050`, clean.
 
 ## Safeguards and security
 
-Normal startup makes DB/workbook/history paths explicit, exposes and verifies health identity and `1.0.0-rc1`, uses process-local portable Node/Python configuration, refuses occupied ports, and never terminates another process. Isolated startup continues to require explicit `.cache` paths plus nonce and refuses the canonical manual paths. Retained tests cover traversal, native identity/hash mismatch, XLSX archive traversal/bombs/external links/macros, and malformed input.
+Normal startup makes DB/workbook/history paths explicit, exposes and verifies health identity and `1.0.0`, uses process-local portable Node/Python configuration, refuses occupied ports, and never terminates another process. Isolated startup continues to require explicit `.cache` paths plus nonce and refuses the canonical manual paths. Retained tests cover traversal, native identity/hash mismatch, XLSX archive traversal/bombs/external links/macros, and malformed input.
 
 No new dependency was added. Existing Univer packages remain the Apache-2.0 open-source 1.0.3 packages; Univer Pro is absent.
 
-## Remaining owner checkpoint
+## Final owner acceptance
 
-The release candidate requires the focused V1 checklist in the final report and [V1 user guide](V1_USER_GUIDE.md). The owner decides **V1 ACCEPTED** or **V1 FAILED**. Do not create a final `v1.0.0` tag before that decision.
+The owner completed the focused V1 manual acceptance checklist and declared **V1 ACCEPTED**. The earlier Phase 1B desktop Ctrl+X checkpoint was also manually accepted and is not pending.
 
-Release decision: **eligible for owner V1 acceptance**. This is not final owner acceptance and no `v1.0.0` tag is authorized.
+Release decision: **PASS — stable V1.** Tiger-Web-Sheets `1.0.0` is approved for the local annotated `v1.0.0` release tag after final deterministic validation.
 
-Focused owner checklist:
+Accepted focused owner checklist:
 
 1. Back up `data\`, `workbooks\`, and `history\` together.
 2. From a fresh shell run `scripts\start_tiger_web_sheets.cmd` and confirm both service windows stay open.
-3. Open `http://127.0.0.1:5173/`; confirm the workbook list and `1.0.0-rc1` are visible.
+3. Open `http://127.0.0.1:5173/`; confirm the workbook list and release version are visible.
 4. Create a disposable workbook and enter values plus one formula.
 5. Apply representative font/fill/number formatting, merge, and freeze.
 6. Create a dropdown, numeric validation, and conditional-format rule; confirm visible behavior.
@@ -119,4 +121,4 @@ Focused owner checklist:
 27. Cancel one native picker and confirm no workbook/revision/file association changed.
 28. Delete only a disposable workbook through its confirmation and verify other workbooks remain.
 29. Close both service windows only after **已儲存**, restart from a fresh shell, and reopen representative workbooks.
-30. Decide **V1 ACCEPTED** or **V1 FAILED**, noting any failed step and visible message.
+30. Record **V1 ACCEPTED** or **V1 FAILED**, noting any failed step and visible message. Owner result: **V1 ACCEPTED**.

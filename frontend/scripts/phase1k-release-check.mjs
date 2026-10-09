@@ -37,7 +37,7 @@ await test('release version is single-source and exposed by backend/frontend', a
   const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'frontend/package.json'), 'utf8'))
   const backend = await fs.readFile(path.join(projectRoot, 'backend/app/main.py'), 'utf8')
   const vite = await fs.readFile(path.join(projectRoot, 'frontend/vite.config.ts'), 'utf8')
-  assert.equal(version, '1.0.0-rc1'); assert.equal(packageJson.version, version)
+  assert.equal(version, '1.0.0'); assert.equal(packageJson.version, version)
   assert.match(backend, /version=PRODUCT_VERSION/); assert.match(vite, /__TIGER_VERSION__/)
 })
 
@@ -61,7 +61,7 @@ await test('main user-facing storage errors are localized and commercial package
 await test('V1 matrix and owner guide retain partials, backup, shutdown, and format boundaries', async () => {
   const matrix = await fs.readFile(path.join(projectRoot, 'docs/PHASE1K_V1_ACCEPTANCE.md'), 'utf8')
   const guide = await fs.readFile(path.join(projectRoot, 'docs/V1_USER_GUIDE.md'), 'utf8')
-  for (const token of ['PASS', 'PARTIAL', 'NOT_TESTED', 'HUMAN_RUNTIME_TEST_REQUIRED', 'Structural reference rewriting remains PARTIAL']) assert.ok(matrix.includes(token), token)
+  for (const token of ['PASS', 'PARTIAL', 'NOT_TESTED', 'Owner status: **PASS.**', 'Structural reference rewriting remains PARTIAL']) assert.ok(matrix.includes(token), token)
   for (const token of ['data\\', 'workbooks\\', 'history\\', '已儲存', 'Chrome', 'Edge', 'CSV', 'XLSX', 'version history', 'shutdown']) assert.ok(guide.toLowerCase().includes(token.toLowerCase()), token)
 })
 
@@ -109,7 +109,7 @@ if (options.base) {
     return data
   }
   const health = await request('/api/health')
-  assert.equal(health.product_version, '1.0.0-rc1')
+  assert.equal(health.product_version, '1.0.0')
   assert.equal(health.runtime_mode, 'isolated-test'); assert.equal(health.instance_nonce, nonce)
   for (const [actual, expected] of [
     [health.database_path, path.join(runtimeRoot, 'workbook.db')],

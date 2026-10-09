@@ -1,6 +1,6 @@
 # Phase 1J — Version History and Restore
 
-Status: **TECHNICAL_PASS. HUMAN_RUNTIME_TEST_REQUIRED.**
+Status: **TECHNICAL_PASS. OWNER_RUNTIME_PASS.**
 
 Starting gate: `main`, HEAD `94bec800119db92fc0ab2b7eb0ca9e1d87a59798`, clean working tree.
 
@@ -71,6 +71,6 @@ A synchronous restore flag excludes automatic saves before UI state effects run,
 
 ## Owner checkpoint
 
-**HUMAN_RUNTIME_TEST_REQUIRED.** Follow the 48-step Phase 1J owner flow from the task specification: create 第一版/第二版, preview and restore both, confirm a new revision and 還原前備份, reload and restart, verify bounded automatic history, workbook isolation, Save As isolation, rename preservation, delete cleanup, recovery cleanup, and one bound external-file restore. The owner must personally decide PASS/FAIL.
+**PASS.** The owner accepted the focused V1 runtime flow, including named versions, preview and restore, higher revisions and 還原前備份, reload/restart persistence, bounded automatic history, workbook isolation, Save As isolation, rename preservation, delete cleanup, recovery cleanup, and bound external-file restore.
 
 Do not begin another phase automatically.

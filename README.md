@@ -1,6 +1,6 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and project-local durable storage with manual Save, debounced autosave, crash recovery, optimistic revisions, native CSV/XLSX exchange, validation/conditional formatting, and persistent version history. The current release candidate is **1.0.0-rc1**. Phase 1K technical evidence is in [the V1 acceptance matrix](docs/PHASE1K_V1_ACCEPTANCE.md); final owner acceptance remains **HUMAN_RUNTIME_TEST_REQUIRED**.
+Tiger Web Sheets is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and project-local durable storage with manual Save, debounced autosave, crash recovery, optimistic revisions, native CSV/XLSX exchange, validation/conditional formatting, and persistent version history. The stable V1 release is **1.0.0**. Technical and owner acceptance evidence is in [the V1 acceptance matrix](docs/PHASE1K_V1_ACCEPTANCE.md).
 
 For normal use, start with the [V1 user guide](docs/V1_USER_GUIDE.md).
 
@@ -159,7 +159,7 @@ The installed Univer 1.0.3 open-source presets provide the grid, clipboard, nati
 
 Verified native operations include:
 
-- rectangular multi-cell copy/paste, native context-menu cut/paste, and external text paste; Ctrl+C and Ctrl+V were verified, while synthetic Ctrl+X could not be exercised by the in-app browser automation
+- rectangular multi-cell copy/paste, native context-menu cut/paste, and external text paste; Ctrl+C and Ctrl+V were verified, and the owner manually accepted desktop Ctrl+X cut/paste, undo/redo, dirty-state, save, and reload behavior during Phase 1B
 - Delete clears cell contents while retaining cell formatting; cell editing and keyboard navigation were verified with Enter, Escape, arrow keys, Tab, and Shift+Tab
 - Undo with Ctrl+Z and Redo with the toolbar; Ctrl+Y did not redo in the tested environment, so use the toolbar Redo command
 - insert, delete, hide/unhide, and resize rows and columns
