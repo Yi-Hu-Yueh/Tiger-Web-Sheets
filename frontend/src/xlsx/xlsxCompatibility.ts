@@ -17,6 +17,17 @@ export function inspectSnapshot(snapshot: IWorkbookData): Summary {
   let cells = 0
   if (!snapshot.sheetOrder.length || snapshot.sheetOrder.length > L.sheets) throw new Error('XLSX 工作表數必須為 1–32。')
   if (snapshot.resources?.length) addFinding(findings, 'resources', 'Tiger 外掛內容（含篩選、圖片或其他資源）不會保留')
+  for (const resource of snapshot.resources ?? []) {
+    if (!['SHEET_DATA_VALIDATION_PLUGIN', 'SHEET_CONDITIONAL_FORMATTING_PLUGIN'].includes(resource.name)) continue
+    let containsRules = true // Unknown/malformed named data must not imply lossless export.
+    try {
+      const data: unknown = JSON.parse(resource.data)
+      containsRules = !!data && typeof data === 'object' && Object.values(data).some((rules) => Array.isArray(rules) && rules.length > 0)
+    } catch { /* Keep the conservative warning. */ }
+    if (!containsRules) continue
+    if (resource.name === 'SHEET_DATA_VALIDATION_PLUGIN') addFinding(findings, 'data-validation', '資料驗證與下拉選單規則不會匯出至 XLSX；請使用 .tws.json 保留規則')
+    else addFinding(findings, 'conditional-formatting', '條件式格式規則及動態顯示效果不會匯出至 XLSX；請使用 .tws.json 保留規則')
+  }
   if (Object.keys(snapshot).some((key) => !['id', 'name', 'appVersion', 'locale', 'styles', 'sheetOrder', 'sheets', 'resources'].includes(key))) addFinding(findings, 'workbook-metadata', '額外活頁簿中繼資料不會保留')
   const supportedStyles = new Set(['ff', 'fs', 'bl', 'it', 'cl', 'bg', 'bd', 'ht', 'vt', 'tb', 'n'])
   const checkStyle = (style?: IStyleData | null | void) => {

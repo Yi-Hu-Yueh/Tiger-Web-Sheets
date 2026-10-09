@@ -1,11 +1,12 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets Phase 1H is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and a project-local SQLite database with manual Save, debounced autosave, local crash recovery, and optimistic-revision semantics, while preserving Univer's native open-source spreadsheet operations, formatting, formulas, sort model, filter, find, and replace UI. Phase 1H desktop runtime acceptance remains HUMAN_RUNTIME_TEST_REQUIRED.
+Tiger Web Sheets is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and a project-local SQLite database with manual Save, debounced autosave, local crash recovery, and optimistic-revision semantics. Phase 1I adds native data validation, dropdown lists, and conditional formatting. Phase 1I technical validation: **PASS**. Owner runtime acceptance: **PASS**, confirmed by the owner on 2026-10-09. Phase 1I final status: **PASS**. The earlier Codex browser-helper failure is historical and is not an outstanding closure gate.
 
 ## Architecture
 
 - Frontend: React 19.3.0, TypeScript 6.0.3, Vite 8.3.3
 - Spreadsheet: `@univerjs/presets`, `@univerjs/preset-sheets-core`, `@univerjs/preset-sheets-sort`, `@univerjs/preset-sheets-filter`, and `@univerjs/preset-sheets-find-replace` 1.0.3
+- Phase 1I: Apache-2.0 `@univerjs/preset-sheets-data-validation` and `@univerjs/preset-sheets-conditional-formatting`, pinned to 1.0.3; native models, validators, UI, renderers, and Traditional Chinese locales (no commercial dependency)
 - Backend: FastAPI 0.128.2 on Python 3.11.3
 - Storage: SQLite plus an atomic native `.tws.json` mirror for every committed workbook
 - Recovery: bounded browser-local IndexedDB checkpoints; only the autosave setting uses localStorage
@@ -75,6 +76,18 @@ Dependencies are locked. To restore them:
 .\.tools\node-v24.19.0-win-x64\npm.cmd --prefix frontend install
 ```
 
+## Phase 1I rules (technical PASS / owner runtime PASS)
+
+Select a range, then use **資料驗證／下拉選單** or **條件式格式設定** to open Univer's native Traditional Chinese rule manager. Create, edit, or delete rules there. Validation types tested in the native engine: explicit single-choice lists, whole numbers, decimals, and text length. Conditional rules tested: greater than, less than, equal, text contains (including 台中), and duplicate values, with fill/text color and bold. The native editors expose additional options which are not certified by this phase.
+
+For codes such as `00123`, select the code range and click **代碼設為文字** BEFORE entry; a length rule is not a text-storage format. Existing numeric values cannot regain previously lost zeroes. The code-format shortcut refuses ranges larger than 50,000 cells rather than silently doing nothing.
+
+Use native **顯示警告** for first-version invalid-input semantics: invalid values remain editable but native validation reports INVALID and the UI renderer supplies an invalid marker/hover message. The owner accepted the documented runtime validation workflow. Native **拒絕輸入** is also configurable; its separate STOP keyboard/dialog behavior remains uncertified. Programmatic value APIs are not a certified rejection boundary. Keep the list display as arrow/chip (not pure text) for a visible dropdown.
+
+Complete rule resources travel through the existing `.tws.json`, manual Save, autosave, recovery, and Save As snapshot pipeline. CSV still exports displayed values only and imports text without inventing rules. XLSX export now explicitly warns that validation/dropdowns and conditional-format rules/effects are not preserved; no XLSX rule mapping was added.
+
+Run `npm --prefix frontend run validate:phase1i-rules` for deterministic native-engine checks. See [Phase 1I closure evidence, limitations, and the retained owner checkpoint](docs/PHASE1I_VALIDATION_CONDITIONAL_FORMATTING.md). The owner accepted dropdowns, numeric/decimal/text-length validation, leading-zero text, conditional formatting, Traditional Chinese text contains, live reevaluation, persistence, autosave, backend restart, Save As isolation, and XLSX warnings. The 1,000-cell headless tests are not browser benchmark measurements; normal interactive behavior has owner acceptance.
+
 ## Manual Save behavior
 
 - `未儲存`: the fallback workbook has never been saved, or the workbook changed after its last committed save
@@ -123,7 +136,7 @@ Opening validates JSON, format/version, identity, revision, SHA-256, and the com
 
 **匯出 CSV** writes the meaningful used rectangle of one selected worksheet through the native Save picker. It exports Univer's displayed/calculated values, quotes every field, uses CRLF records, and includes a UTF-8 BOM for Windows interoperability. CSV export never changes the Tiger workbook's save state.
 
-CSV is a single-table exchange format, not a substitute for `.tws.json`. It does not preserve multiple worksheets, formulas as formulas, formatting, merged cells, freeze state, dimensions, filters, charts, or workbook metadata. XLSX remains unsupported. See [docs/PHASE1F_CSV.md](docs/PHASE1F_CSV.md).
+CSV is a single-table exchange format, not a substitute for `.tws.json`. It does not preserve multiple worksheets, formulas as formulas, formatting, merged cells, freeze state, dimensions, filters, validation, conditional formatting, charts, or workbook metadata. XLSX has the separately documented bounded Phase 1G exchange baseline, but Phase 1I rule round-trip is not certified. See [docs/PHASE1F_CSV.md](docs/PHASE1F_CSV.md).
 
 ## Phase 1B spreadsheet operations
 
@@ -209,7 +222,7 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 
 ## Current limitations
 
-- Autosave remains intentionally unsupported; manual Save is authoritative.
+- Autosave shares the manual Save pipeline and requires a committed workbook with a bound native file; browser shutdown completion and edits within the recovery checkpoint delay are not guaranteed.
 - Native Open/Save pickers require a secure-context desktop Chrome or Edge implementation of the File System Access API.
 - Browser file permissions may need to be granted again after reload or browser restart.
 - CSV import supports UTF-8 only and is limited to 5 MiB / 250,000 parsed cells.
@@ -219,7 +232,23 @@ $env:Path = "$(Resolve-Path ..\.tools\node-v24.19.0-win-x64);$env:Path"
 - CSV import/export supports the documented single-sheet UTF-8 exchange boundary.
 - Phase 1G-R1 technical implementation: **PASS**. Phase 1G-R1 Owner Runtime: **PASS** (owner-confirmed desktop Chrome/Edge acceptance). XLSX import/export uses pinned ExcelJS 4.4.0 in a dedicated cancellable Web Worker. `.tws.json` remains the native format; XLSX is bounded exchange, not full Excel compatibility. See [docs/PHASE1G_XLSX.md](docs/PHASE1G_XLSX.md) for the supported baseline, warnings/refusals, security limits, and tested performance boundary.
 - Stored documents are Univer snapshot JSON in SQLite plus `.tws.json` mirrors, not XLSX workbooks.
-- Conditional formatting, data validation, charts, pivot tables, printing, PDF export, and version history are not implemented.
+- Data validation and conditional formatting are limited to the tested Phase 1I first-version rules; advanced Excel parity, advanced conditional-format types, and overlap/priority behavior are not certified. Native `.tws.json` is authoritative for rules. CSV does not preserve them, and XLSX warns rather than claiming certified rule round-trip.
+- Phase 1C structural formula-reference rewriting remains **PARTIAL**.
+- Charts, pivot tables, printing, PDF export, and version history are not implemented.
 - Authentication, collaboration, AI, and cloud deployment are not implemented.
 - Excel compatibility is not claimed beyond the behavior explicitly tested with Univer 1.0.3.
+
+## Phase 1I final capability status
+
+- Dropdown: PASS
+- Whole-number validation: PASS
+- Decimal validation: PASS
+- Text-length validation: PASS
+- Conditional formatting numeric rules: PASS
+- Traditional Chinese text contains: PASS
+- Live reevaluation: PASS
+- Persistence: PASS
+- Autosave / recovery integration: PASS
+- Owner runtime acceptance: PASS
+- Phase 1I: PASS
 

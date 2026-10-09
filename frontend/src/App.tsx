@@ -10,6 +10,11 @@ import {
 import UniverPresetSheetsFilterZhTW from '@univerjs/preset-sheets-filter/locales/zh-TW'
 import { UniverSheetsFindReplacePreset } from '@univerjs/preset-sheets-find-replace'
 import UniverPresetSheetsFindReplaceZhTW from '@univerjs/preset-sheets-find-replace/locales/zh-TW'
+import { UniverSheetsDataValidationPreset } from '@univerjs/preset-sheets-data-validation'
+import UniverPresetSheetsDataValidationZhTW from '@univerjs/preset-sheets-data-validation/locales/zh-TW'
+import { UniverSheetsConditionalFormattingPreset } from '@univerjs/preset-sheets-conditional-formatting'
+import UniverPresetSheetsConditionalFormattingZhTW from '@univerjs/preset-sheets-conditional-formatting/locales/zh-TW'
+import { openNativeRulePanel, formatSelectedCodeAsText, createRuleMutationTracker } from './rules/nativeRuleUi'
 import {
   SortRangeCommand,
   SortType,
@@ -22,7 +27,6 @@ import { recalculateXlsx } from './xlsx/xlsxRecalculation'
 import { AutosaveCoordinator } from './persistence/autosaveCoordinator'
 import { recoveryStore, recoveryDisposition, type RecoveryCheckpoint } from './persistence/recoveryStore'
 import RecoveryDialog from './persistence/RecoveryDialog'
-import { isPersistedWorkbookMutation } from './persistence/workbookMutation'
 import {
   CsvImportPreviewDialog,
   CsvWorksheetDialog,
@@ -80,6 +84,8 @@ import {
 import '@univerjs/preset-sheets-core/lib/index.css'
 import '@univerjs/preset-sheets-filter/lib/index.css'
 import '@univerjs/preset-sheets-find-replace/lib/index.css'
+import '@univerjs/preset-sheets-data-validation/lib/index.css'
+import '@univerjs/preset-sheets-conditional-formatting/lib/index.css'
 
 // Register the native sort model/command without Univer's ambiguous quick-sort UI.
 // Tiger exposes one explicit whole-record workflow below and always sets hasTitle.
@@ -198,6 +204,8 @@ function App() {
   const [filterPending, setFilterPending] = useState(false)
   const [filterNotice, setFilterNotice] = useState('')
   const [filterError, setFilterError] = useState('')
+  const [ruleError, setRuleError] = useState('')
+  const [ruleNotice, setRuleNotice] = useState('')
   const [csvNotice, setCsvNotice] = useState('')
   const [csvError, setCsvError] = useState('')
   const [csvPending, setCsvPending] = useState(false)
@@ -297,6 +305,8 @@ function App() {
     autosaveRef.current?.dispose()
     autosaveRef.current = null
     setRecoveryWarning('')
+    setRuleError('')
+    setRuleNotice('')
     setBoundFileName(null)
 
     async function initialize() {
@@ -334,6 +344,8 @@ function App() {
             UniverPresetSheetsCoreZhTW,
             UniverPresetSheetsFilterZhTW,
             UniverPresetSheetsFindReplaceZhTW,
+            UniverPresetSheetsDataValidationZhTW,
+            UniverPresetSheetsConditionalFormattingZhTW,
           ),
         },
         presets: [
@@ -341,6 +353,8 @@ function App() {
           UniverSheetsFilterPreset(),
           UniverSheetsFindReplacePreset(),
           UniverSheetsSafeSortPreset(),
+          UniverSheetsDataValidationPreset({ showEditOnDropdown: true }),
+          UniverSheetsConditionalFormattingPreset(),
         ],
       })
 
@@ -382,9 +396,11 @@ function App() {
 
       if (disposed) return
 
+      const ruleMutationTracker = createRuleMutationTracker(univerAPI)
       disposables.push(
+        ruleMutationTracker,
         univerAPI.addEvent(univerAPI.Event.CommandExecuted, (event) => {
-          if (!isPersistedWorkbookMutation(event)) return
+          if (!ruleMutationTracker.isPersistent(event)) return
           changeGenerationRef.current += 1
           setStatus('unsaved')
           coordinator.mutation()
@@ -1211,6 +1227,29 @@ function App() {
     )
   }
 
+  const openRules = async (kind: 'validation' | 'conditional') => {
+    setRuleError('')
+    setRuleNotice('')
+    try {
+      if (!apiRef.current) throw new Error('活頁簿尚未就緒。')
+      await openNativeRulePanel(apiRef.current, kind)
+    } catch (error) {
+      setRuleError(error instanceof Error ? error.message : '無法開啟規則面板。')
+    }
+  }
+
+  const formatCode = async () => {
+    setRuleError('')
+    setRuleNotice('')
+    try {
+      if (!apiRef.current) throw new Error('活頁簿尚未就緒。')
+      await formatSelectedCodeAsText(apiRef.current)
+      setRuleNotice('所選範圍已設為文字格式；請在此格式下輸入 00123 等代碼。既有數值不會自動補回遺失的零。')
+    } catch (error) {
+      setRuleError(error instanceof Error ? error.message : '無法設定文字格式。')
+    }
+  }
+
   return (
     <><main className="app-shell">
       <header className="app-bar">
@@ -1239,6 +1278,11 @@ function App() {
           {csvError && <span className="filter-error" role="alert">{csvError}</span>}
           {loadMessage && status !== 'load-error' && <span className="filter-error" role="alert">{loadMessage}</span>}
           {recoveryWarning && <span className="filter-error" role="alert">{recoveryWarning}</span>}
+          <button type="button" className="secondary-button compact-button" disabled={!canSave} onClick={() => void openRules('validation')} data-testid="validation-button">資料驗證／下拉選單</button>
+          <button type="button" className="secondary-button compact-button" disabled={!canSave} onClick={() => void openRules('conditional')} data-testid="conditional-format-button">條件式格式設定</button>
+          <button type="button" className="secondary-button compact-button" disabled={!canSave} onClick={() => void formatCode()} title="輸入含前置零的代碼前，先將所選範圍設為文字">代碼設為文字</button>
+          {ruleError && <span className="filter-error" role="alert">{ruleError}</span>}
+          {ruleNotice && <span role="status">{ruleNotice}</span>}
           <button
             type="button"
             className="filter-button"
