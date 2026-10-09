@@ -1,7 +1,7 @@
 {
   "name": "tiger-web-sheets-frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0-rc1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,7 @@
     "validate:phase1h-autosave": "node scripts/phase1h-autosave-check.mjs",
     "validate:phase1i-rules": "node scripts/phase1i-rules-check.mjs",
     "validate:phase1j-history": "node scripts/phase1j-history-check.mjs",
+    "validate:phase1k-release": "node scripts/phase1k-release-check.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

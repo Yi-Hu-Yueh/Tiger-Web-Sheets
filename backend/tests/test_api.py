@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.services.workbook_store import WorkbookStore
+from app.version import PRODUCT_VERSION
 
 
 def save_payload(snapshot: dict, expected_revision: int = 0) -> dict:
@@ -29,6 +30,7 @@ def test_health_endpoint(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
+        "product_version": PRODUCT_VERSION,
         "database": "sqlite",
         "runtime_mode": "manual",
         "database_path": str(client.app.state.database_path),
@@ -46,6 +48,7 @@ def test_isolated_runtime_health_exposes_verified_identity(
     with TestClient(create_app(database_path, workbook_root)) as isolated_client:
         assert isolated_client.get("/api/health").json() == {
             "status": "ok",
+            "product_version": PRODUCT_VERSION,
             "database": "sqlite",
             "runtime_mode": "isolated-test",
             "database_path": str(database_path.resolve()),

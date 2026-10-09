@@ -31,6 +31,7 @@ from app.services.workbook_store import (
     WorkbookStore,
     VersionNotFoundError,
 )
+from app.version import PRODUCT_VERSION
 
 CANONICAL_WORKBOOK_ID = "default"
 
@@ -106,7 +107,7 @@ def create_app(
         app.state.history_root = resolved_history_root
         yield
 
-    application = FastAPI(title="Tiger Web Sheets API", version="1.0.0", lifespan=lifespan)
+    application = FastAPI(title="Tiger Web Sheets API", version=PRODUCT_VERSION, lifespan=lifespan)
 
     @application.get("/api/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
@@ -123,6 +124,7 @@ def create_app(
             ) from error
         return HealthResponse(
             status="ok",
+            product_version=PRODUCT_VERSION,
             database="sqlite",
             runtime_mode=runtime_identity.mode,
             database_path=str(runtime_identity.database_path),
@@ -198,7 +200,7 @@ def create_app(
             )
         except WorkbookConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        except (sqlite3.Error, OSError, NativeWorkbookError, ValueError, TypeError) as error:
+        except (sqlite3.Error, OSError, NativeWorkbookError, HistoryStorageError, ValueError, TypeError) as error:
             raise HTTPException(status_code=503, detail="save failed") from error
         return _response(record)
 

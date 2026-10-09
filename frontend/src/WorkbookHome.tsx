@@ -22,7 +22,7 @@ export default function WorkbookHome({ workbooks, loading, error, notice, csvPen
   return (
     <main className="home-shell">
       <header className="home-header">
-        <div><h1>Tiger Web Sheets</h1><p>本機活頁簿</p></div>
+        <div><h1>Tiger Web Sheets</h1><p>本機活頁簿 · {__TIGER_VERSION__}</p></div>
         <div className="home-actions">
           <button type="button" className="secondary-button" onClick={onOpenLocal}>開啟本機檔案</button>
           <button type="button" className="secondary-button" onClick={onImportCsv} disabled={csvPending}>匯入 CSV</button>

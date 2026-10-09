@@ -1352,7 +1352,7 @@ function App() {
     <><main className="app-shell">
       <header className="app-bar">
         <div className="document-identity">
-          <h1>Tiger Web Sheets</h1>
+          <h1>Tiger Web Sheets <small>{__TIGER_VERSION__}</small></h1>
           <strong data-testid="current-workbook-name">{currentWorkbook.name}</strong>
           <span className="bound-file-name" data-testid="bound-file-name">
             {boundFileName ? `本機檔案：${boundFileName}` : '本機檔案：尚未選擇'}

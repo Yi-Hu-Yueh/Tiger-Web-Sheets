@@ -34,6 +34,7 @@ export type WorkbookRestoreResult = {
 
 type RuntimeHealth = {
   status: string
+  product_version: string
   database: string
   runtime_mode: string
   database_path: string
@@ -62,31 +63,60 @@ export async function verifyRuntimeIdentity(signal?: AbortSignal): Promise<void>
 
   if (configured.every((value) => !value)) return
   if (configured.some((value) => !value)) {
-    throw new ApiError('隔離測試環境識別設定不完整', 503)
+    throw new ApiError('執行環境識別設定不完整，已拒絕存取。', 503)
   }
 
-  const response = await fetch('/api/health', { signal })
-  if (!response.ok) throw new ApiError('無法驗證後端隔離環境', response.status)
+  let response: Response
+  try {
+    response = await fetch('/api/health', { signal })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError('無法連線至儲存服務。請確認後端已啟動。', 0)
+  }
+  if (!response.ok) throw new ApiError('無法驗證後端執行環境。', response.status)
   const health = await response.json() as RuntimeHealth
   if (
     health.status !== 'ok' ||
+    health.product_version !== __TIGER_VERSION__ ||
     health.runtime_mode !== expectedMode ||
     health.instance_nonce !== expectedNonce ||
     normalizeRuntimePath(health.database_path) !== normalizeRuntimePath(expectedDatabasePath) ||
     normalizeRuntimePath(health.workbook_root) !== normalizeRuntimePath(expectedWorkbookRoot) ||
     normalizeRuntimePath(health.history_root) !== normalizeRuntimePath(expectedHistoryRoot)
   ) {
-    throw new ApiError('後端隔離環境識別不符，已拒絕存取', 503)
+    throw new ApiError('後端執行環境識別不符，已拒絕存取。', 503)
   }
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   await verifyRuntimeIdentity(init?.signal ?? undefined)
-  const response = await fetch(path, init)
+  let response: Response
+  try {
+    response = await fetch(path, init)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError('無法連線至儲存服務。請確認後端已啟動。', 0)
+  }
   if (!response.ok) {
-    let detail = ''
-    try { detail = String((await response.json() as { detail?: unknown }).detail ?? '') } catch { /* no JSON detail */ }
-    const message = detail || (response.status === 409 ? '儲存衝突' : '文件操作失敗')
+    let detail: unknown
+    try { detail = (await response.json() as { detail?: unknown }).detail } catch { /* no JSON detail */ }
+    const known: Record<string, string> = {
+      'database unavailable': '儲存資料庫目前無法使用。',
+      'save failed': '儲存失敗；目前內容仍保留在畫面中。',
+      'create failed': '建立活頁簿失敗。',
+      'rename failed': '重新命名失敗。',
+      'delete failed': '刪除活頁簿失敗。',
+      'workbook not found': '找不到指定的活頁簿。',
+      'version not found': '找不到指定的版本。',
+      'version history unavailable': '版本紀錄目前無法使用。',
+      'version creation failed': '建立版本失敗。',
+      'version restore failed': '版本還原失敗；目前版本未被取代。',
+    }
+    const detailText = typeof detail === 'string' ? detail : ''
+    const localizedDetail = /[\u3400-\u9fff]/u.test(detailText) ? detailText : ''
+    const message = response.status === 409
+      ? '儲存衝突：伺服器已有較新的版本，未覆寫其內容。'
+      : known[detailText] || (response.status === 413 ? '檔案或版本超過支援大小。' : localizedDetail || '文件操作失敗。')
     throw new ApiError(message, response.status)
   }
   return (response.status === 204 ? undefined : await response.json()) as T

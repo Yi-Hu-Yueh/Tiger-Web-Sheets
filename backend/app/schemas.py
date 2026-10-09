@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class HealthResponse(BaseModel):
     status: str
+    product_version: str
     database: str
     runtime_mode: str
     database_path: str

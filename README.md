@@ -1,6 +1,8 @@
 # Tiger Web Sheets
 
-Tiger Web Sheets is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and project-local durable storage with manual Save, debounced autosave, crash recovery, optimistic revisions, and persistent version history. Phase 1J adds immutable named/automatic versions and safe restore. Phase 1J technical validation is documented in [docs/PHASE1J_VERSION_HISTORY.md](docs/PHASE1J_VERSION_HISTORY.md); owner runtime acceptance remains **HUMAN_RUNTIME_TEST_REQUIRED**.
+Tiger Web Sheets is a persistent local workbook manager and browser spreadsheet. It connects editable open-source Univer workbooks to a FastAPI API and project-local durable storage with manual Save, debounced autosave, crash recovery, optimistic revisions, native CSV/XLSX exchange, validation/conditional formatting, and persistent version history. The current release candidate is **1.0.0-rc1**. Phase 1K technical evidence is in [the V1 acceptance matrix](docs/PHASE1K_V1_ACCEPTANCE.md); final owner acceptance remains **HUMAN_RUNTIME_TEST_REQUIRED**.
+
+For normal use, start with the [V1 user guide](docs/V1_USER_GUIDE.md).
 
 ## Architecture
 
@@ -34,10 +36,10 @@ The required FastAPI, Uvicorn, Pydantic, HTTPX, and pytest versions were already
 From a fresh Command Prompt or PowerShell at the project root:
 
 ```bat
-scripts\start_dev.cmd
+scripts\start_tiger_web_sheets.cmd
 ```
 
-This starts separate backend and frontend command windows. Close those project windows or press `Ctrl+C` in each to stop the services.
+This fail-closed launcher checks ports `18085` and `5173`, starts separate backend and frontend command windows, verifies the backend's manual database/workbook/history identity, and never terminates another process. Close those project windows or press `Ctrl+C` in each to stop the services. Wait for **已儲存** first: neither browser nor process shutdown can guarantee completion of an asynchronous save.
 
 To start services individually:
 
@@ -70,6 +72,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_frontend.ps1
 ```
 
 No permanent `PATH` or PowerShell execution-policy change is required.
+
+## Backup
+
+Stop Tiger, then back up `data\`, `workbooks\`, and `history\` together. They contain SQLite metadata/current state, managed native mirrors, and immutable history snapshots. Do not rely on `.cache\`; it is disposable. Restore all three directories from the same backup point.
 
 ## Install frontend dependencies
 

@@ -33,6 +33,7 @@ $frontendDirectory = Join-Path $projectRoot 'frontend'
 $pythonExecutable = 'D:\0TIGER\6months\PythonAPIDevelopment\venv_multi_query\Scripts\python.exe'
 $nodeExecutable = Join-Path $projectRoot '.tools\node-v24.19.0-win-x64\node.exe'
 $viteScript = Join-Path $frontendDirectory 'node_modules\vite\bin\vite.js'
+$productVersion = (Get-Content -LiteralPath (Join-Path $projectRoot 'VERSION') -Raw).Trim()
 $canonicalDatabase = [System.IO.Path]::GetFullPath(
     (Join-Path $projectRoot 'data\tiger_web_sheets.db')
 )
@@ -181,6 +182,7 @@ try {
     }
     if (
         $health.status -ne 'ok' -or
+        $health.product_version -ne $productVersion -or
         $health.runtime_mode -ne 'isolated-test' -or
         $health.instance_nonce -ne $InstanceNonce -or
         -not $health.database_path.Equals(
